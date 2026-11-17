@@ -15,7 +15,7 @@
  * © 2026 Marlboro62.
  */
 (() => {
-const CARD_VERSION = "0.1.0-beta.7";
+const CARD_VERSION = "0.1.0-beta.8";
 
 /* ---------------------------------------------------------------- données */
 
@@ -1257,6 +1257,15 @@ const ZL_DEFAULTS = {
 /** Bloc « compteur en direct » : pastilles comme celles de l'ancien tableau de bord. */
 const ZL_STYLE = `<style>
 .zl-meter { margin: 10px 12px 0; display: grid; gap: 6px; }
+.zl-nav { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.zl-btn { border: 1px solid var(--med-line); background: var(--med-surface); color: var(--med-text); border-radius: 999px;
+  min-width: 30px; height: 28px; padding: 0 9px; font: inherit; font-size: calc(.95rem * var(--fs, 1)); line-height: 1; cursor: pointer; }
+.zl-btn:hover:not([disabled]), .zl-btn:focus-visible { border-color: var(--med-blue); outline: none; }
+.zl-btn[disabled] { opacity: .35; cursor: default; }
+.zl-btn.zl-today { font-size: calc(.75rem * var(--fs, 1)); color: var(--med-blue); }
+.zl-hours svg { height: 90px; }
+.zl-hl { display: flex; justify-content: space-between; font-size: calc(.68rem * var(--fs, 1)); color: var(--med-muted); padding: 2px 2px 0; }
+.zl-wait { font-size: calc(.78rem * var(--fs, 1)); color: var(--med-muted); padding: 10px 2px; }
 .zl-row { display: flex; flex-wrap: wrap; gap: 6px; }
 .zl-chip { flex: 1 1 auto; min-width: 92px; padding: 6px 10px; border-radius: 10px; border: 1px solid var(--med-line);
   background: var(--med-surface); display: flex; flex-direction: column; gap: 1px; }
@@ -1348,10 +1357,21 @@ class ZlinkyCard extends LinkyLook {
     if (!this.shadowRoot) {
       this.attachShadow({ mode: "open" });
       this.shadowRoot.addEventListener("click", (ev) => {
+        // ‹ › : jour précédent / suivant ; « Aujourd'hui » : retour au jour en cours
+        const nav = ev.target.closest("[data-nav]");
+        if (nav) {
+          const max = Math.max(0, (this._all?.length || 1) - 1);
+          const n = nav.dataset.nav;
+          this._selected = n === "today" ? 0 : n === "prev" ? Math.min(max, this._selected + 1) : Math.max(0, this._selected - 1);
+          this._render(true);
+          this._loadHours();
+          return;
+        }
         const t = ev.target.closest("[data-i]");
         if (!t) return;
         this._selected = Number(t.dataset.i);
         this._render(true);
+        this._loadHours();
       });
     }
     this._render(true);
@@ -1625,14 +1645,15 @@ class ZlinkyCard extends LinkyLook {
       }
     });
     const shown = all.slice(0, Math.max(1, Math.min(c.days, all.length)));
-    if (this._selected >= shown.length) this._selected = 0;
+    this._all = all;
+    if (this._selected >= all.length) this._selected = 0;
     this.shadowRoot.innerHTML = `${STYLE}${ZL_STYLE}<ha-card class="${mode}"${hcHpStyle(c)}>
       ${this._header(null)}
-      ${this._zlHero(all[0], all[1])}
+      ${this._zlHero(all[this._selected], all[this._selected + 1])}
+      ${this._hoursChart(all[this._selected])}
       ${c.show_meter !== false ? this._meter(prices) : ""}
       ${this._tiles(a, all.filter((d) => !d.today))}
       ${this._chart(shown)}
-      ${this._selected > 0 ? this._detail(shown[this._selected]) : ""}
       ${c.show_power !== false ? this._power(shown) : ""}
       ${this._ecowatt()}
       ${this._zlFooter(all[1])}
@@ -1642,29 +1663,95 @@ class ZlinkyCard extends LinkyLook {
   /** Aujourd'hui, en direct, comparé à hier à la même heure. */
   _zlHero(day, prev) {
     if (!day) return "";
-    const ref = this._yesterdaySameTime;
+    const live = !!day.today;
+    // aujourd'hui : écart avec hier à la même heure ; jour passé : écart avec la veille
+    const ref = live ? this._yesterdaySameTime : prev?.total;
     const evo = day.total !== null && ref > 0 ? ((day.total - ref) / ref) * 100 : null;
     const split = day.hc !== null && day.hp !== null && day.hc + day.hp > 0;
     const hcPct = split ? (day.hc / (day.hc + day.hp)) * 100 : 0;
     const when = day.date.toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" });
     return `<section class="hero">
       <div>
-        <div class="hero-l">${esc(cap(when))} · en cours</div>
+        <div class="zl-nav">
+          <button class="zl-btn" data-nav="prev" title="Jour précédent" aria-label="Jour précédent"${this._selected >= (this._all?.length || 1) - 1 ? " disabled" : ""}>‹</button>
+          <span class="hero-l">${esc(cap(when))}${live ? " · en cours" : ""}</span>
+          <button class="zl-btn" data-nav="next" title="Jour suivant" aria-label="Jour suivant"${live ? " disabled" : ""}>›</button>
+          ${live ? "" : `<button class="zl-btn zl-today" data-nav="today">Aujourd'hui</button>`}
+        </div>
         <div class="hero-v">${fmt(day.total, 2)}<span>kWh</span></div>
-        ${evo !== null ? `<div class="evo ${evo > 0 ? "up" : "down"}">${evo > 0 ? "+" : ""}${fmt(evo, 1)} % par rapport à hier à la même heure</div>` : ""}
-        ${prev && prev.total !== null ? `<div class="hero-p">Hier : ${fmt(prev.total, 2)} kWh${prev.cost !== null && prev.cost !== undefined ? ` · ${euro(prev.cost)}` : ""}</div>` : ""}
+        ${evo !== null ? `<div class="evo ${evo > 0 ? "up" : "down"}">${evo > 0 ? "+" : ""}${fmt(evo, 1)} % ${live ? "par rapport à hier à la même heure" : "par rapport à la veille"}</div>` : ""}
+        ${prev && prev.total !== null ? `<div class="hero-p">${live ? "Hier" : "Veille"} : ${fmt(prev.total, 2)} kWh${prev.cost !== null && prev.cost !== undefined ? ` · ${euro(prev.cost)}` : ""}</div>` : ""}
       </div>
       <div class="hero-r">
         ${!this._config.show_cost ? "" : day.cost !== null
-          ? `<div class="cost">${euro(day.cost)}</div><div class="cost-l">coût depuis minuit${day.sub ? `, dont abonnement ${euro(day.sub)}` : ""}</div>`
+          ? `<div class="cost">${euro(day.cost)}</div><div class="cost-l">${live ? "coût depuis minuit" : "coût de la journée"}${day.sub ? `, dont abonnement ${euro(day.sub)}` : ""}</div>`
           : `<div class="cost none">—</div><div class="cost-l">prix introuvables (tableau Énergie ou carte)</div>`}
-        ${this._livePower()}
-        ${this._tariff()}
+        ${live ? this._livePower() + this._tariff() : day.mp !== null ? `<div class="hero-p">Pic ${fmt(day.mp, 2)} kVA${day.mpOver ? " · dépassement" : ""}</div>` : ""}
       </div>
       ${split
         ? `<div class="split${TEMPO[day.tempo] ? ` tb-${day.tempo}` : ""}"><div class="bar"><i class="hc" style="width:${hcPct}%"></i><i class="hp" style="width:${100 - hcPct}%"></i></div>
            <div class="split-l"><span class="k-hc">Heures creuses ${fmt(day.hc, 2)} kWh</span><span class="k-hp">Heures pleines ${fmt(day.hp, 2)} kWh</span></div></div>`
         : ""}
+    </section>`;
+  }
+
+  /** Consommation heure par heure du jour affiché : hier et aujourd'hui sont déjà lus, les autres jours à la demande. */
+  async _loadHours() {
+    const d = this._all?.[this._selected];
+    if (!d || !this._hass || !this._stats) return;
+    const key = ZL.key(d.date);
+    this._hours = this._hours || {};
+    if (this._hours[key] || d.today || d.date.getTime() === ZL.dayOf(new Date()).getTime() - ZL.DAY) return;
+    this._hours[key] = "loading";
+    try {
+      this._hours[key] = await this._hass.callWS({
+        type: "recorder/statistics_during_period",
+        start_time: d.date.toISOString(),
+        end_time: new Date(d.date.getTime() + ZL.DAY).toISOString(),
+        statistic_ids: this._stats.parts.map((p) => p.id),
+        period: "hour",
+        types: ["change"],
+        units: { energy: "kWh" },
+      });
+    } catch (e) {
+      delete this._hours[key];
+    }
+    this._render(true);
+  }
+
+  _hoursChart(day) {
+    if (!day || !this._stats) return "";
+    const start = day.date.getTime();
+    const recent = day.today || start === ZL.dayOf(new Date()).getTime() - ZL.DAY;
+    const src = recent ? this._stats.hourly : this._hours?.[ZL.key(day.date)];
+    if (!src || src === "loading") return `<section class="zl-hours"><div class="chart-h"><span>Heure par heure</span></div><div class="zl-wait">Lecture…</div></section>`;
+    const hours = Array.from({ length: 24 }, () => ({ hc: 0, hp: 0, base: 0, color: null, top: 0 }));
+    for (const part of this._stats.parts) {
+      for (const row of src[part.id] || []) {
+        const t = ZL.start(row).getTime();
+        if (t < start || t >= start + ZL.DAY || !Number.isFinite(row.change)) continue;
+        const h = hours[Math.floor((t - start) / 3600000)];
+        if (!h) continue;
+        h[part.kind] += row.change;
+        if (part.color && row.change > h.top) { h.top = row.change; h.color = part.color; }
+      }
+    }
+    const max = Math.max(0.05, ...hours.map((h) => h.hc + h.hp + h.base)) * 1.08;
+    const H = 100, slot = 100 / 24, w = slot * 0.7;
+    const bars = hours.map((h, k) => {
+      const x = k * slot + (slot - w) / 2;
+      const tb = h.color && TEMPO[h.color] ? ` tb-${h.color}` : "";
+      const hHc = (h.hc / max) * H, hHp = (h.hp / max) * H, hB = (h.base / max) * H;
+      const tip = `<title>${k} h - ${k + 1} h : ${fmt(h.hc + h.hp + h.base, 2)} kWh${h.hc || h.hp ? ` (HC ${fmt(h.hc, 2)}, HP ${fmt(h.hp, 2)})` : ""}</title>`;
+      return `<g>${tip}${hB ? `<rect class="base" x="${x}" y="${H - hB}" width="${w}" height="${hB}"/>` : ""}
+        ${hHc ? `<rect class="hc${tb}" x="${x}" y="${H - hHc}" width="${w}" height="${hHc}"/>` : ""}
+        ${hHp ? `<rect class="hp${tb}" x="${x}" y="${H - hHc - hHp}" width="${w}" height="${hHp}"/>` : ""}</g>`;
+    }).join("");
+    const top = hours.reduce((m, h, k) => (h.hc + h.hp + h.base > m.v ? { v: h.hc + h.hp + h.base, k } : m), { v: 0, k: 0 });
+    return `<section class="chart zl-hours">
+      <div class="chart-h"><span>Heure par heure${top.v ? ` · maximum ${fmt(top.v, 2)} kWh de ${top.k} h à ${top.k + 1} h` : ""}</span></div>
+      <svg viewBox="0 0 100 ${H}" preserveAspectRatio="none" role="img" aria-label="Consommation heure par heure">${bars}</svg>
+      <div class="zl-hl"><span>0 h</span><span>6 h</span><span>12 h</span><span>18 h</span><span>24 h</span></div>
     </section>`;
   }
 

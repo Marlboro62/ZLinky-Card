@@ -40,7 +40,8 @@ Même présentation que la [Carte Enedis Linky New](https://github.com/Marlboro6
 - **Compteur en direct** : puissance, courant, tension, pic du jour, tarif en cours avec son prix, chaque index (un par couleur et HC/HP en Tempo), total et part des heures creuses, qualité du lien Zigbee.
 - **Semaine, mois et année** jusqu'à hier, avec la projection du mois en cours.
 - **Comparaison avec l'an dernier** seulement si les statistiques couvrent presque toute la période (au moins 90 % des jours) : pas de « 0 kWh » ni de pourcentage trompeur sur une installation récente.
-- **Graphique** des 7, 14 ou 31 derniers jours ; un clic sur un jour affiche son détail.
+- **Jours précédents** : les flèches ‹ › de l'encadré du haut (ou un clic sur une barre du graphique) affichent un autre jour, avec sa consommation **heure par heure** ; « Aujourd'hui » revient au jour en cours.
+- **Graphique** des 7, 14 ou 31 derniers jours.
 - **Puissance maximale** par jour (avec la puissance apparente du ZLinky).
 - **EcoWatt** et **Tempo** (capteurs RTE), facultatifs.
 
