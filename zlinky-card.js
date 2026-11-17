@@ -15,7 +15,7 @@
  * © 2026 Marlboro62.
  */
 (() => {
-const CARD_VERSION = "0.1.0-beta.9";
+const CARD_VERSION = "0.1.0-beta.10";
 
 /* ---------------------------------------------------------------- données */
 
@@ -1237,6 +1237,10 @@ const ZL_DEFAULTS = {
   ccasn_prev_entity: "",
   show_ccasn: true,
   show_ccasn_prev: true,
+  message_entity: "",
+  message2_entity: "",
+  show_messages: true,
+  message_test: false,
   show_meter: true,
   subscribed_power: null,
   show_cost: true,
@@ -1260,6 +1264,19 @@ const ZL_DEFAULTS = {
 
 /** Bloc « compteur en direct » : pastilles comme celles de l'ancien tableau de bord. */
 const ZL_STYLE = `<style>
+ha-card { position: relative; display: block; }
+.zl-msg { position: absolute; inset: 0; z-index: 5; display: flex; align-items: flex-start; justify-content: center; padding: 56px 14px 14px;
+  background: color-mix(in srgb, var(--med-bg) 55%, transparent); backdrop-filter: blur(2px); border-radius: inherit; }
+.zl-msg-box { display: flex; gap: 10px; align-items: flex-start; width: 100%; max-width: 440px; padding: 14px; border-radius: 14px;
+  background: var(--med-bg); border: 2px solid #f0a33a; box-shadow: 0 10px 30px rgba(0, 0, 0, .45); color: var(--med-text); }
+.zl-msg-box svg { width: 28px; height: 28px; flex: none; fill: #f0a33a; }
+.zl-msg-t { display: grid; gap: 4px; flex: 1; min-width: 0; }
+.zl-msg-t strong { font-size: calc(.95rem * var(--fs, 1)); }
+.zl-msg-t span { font-size: calc(1.05rem * var(--fs, 1)); font-weight: 700; letter-spacing: .02em; overflow-wrap: anywhere; }
+.zl-msg-t small { font-size: calc(.72rem * var(--fs, 1)); color: var(--med-muted); }
+.zl-msg-x { flex: none; width: 34px; height: 34px; border-radius: 50%; border: 1px solid var(--med-line); background: var(--med-surface);
+  color: var(--med-text); font-size: 1.3rem; line-height: 1; cursor: pointer; }
+.zl-msg-x:hover, .zl-msg-x:focus-visible { border-color: #f0a33a; outline: none; }
 .zl-meter { margin: 10px 12px 0; display: grid; gap: 6px; }
 .zl-nav { display: flex; align-items: center; gap: 6px; flex-wrap: nowrap; min-width: 0; }
 .zl-nav .hero-l { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
@@ -1317,6 +1334,9 @@ class ZlinkyCard extends LinkyLook {
       // puissance active moyenne sur 30 minutes (CCASN) et celle des 30 minutes précédentes (CCASN-1)
       ccasn_entity: find(/ccasn$/i),
       ccasn_prev_entity: find(/ccasn_?1$/i),
+      // messages du fournisseur ou du distributeur affichés par le compteur (MSG1, MSG2)
+      message_entity: find(/message_?1$|msg_?1$/i),
+      message2_entity: find(/message_?2$|msg_?2$/i),
       lqi_entity: Object.keys(hass?.states || {}).find((id) => /(linky|lixee).*(linkquality|_lqi$)/i.test(id)) || "",
     };
     // Période en cours : le capteur dont l'état ressemble à « HP BLEU », « HCJB »… (Zigbee2MQTT nomme parfois
@@ -1366,6 +1386,13 @@ class ZlinkyCard extends LinkyLook {
     if (!this.shadowRoot) {
       this.attachShadow({ mode: "open" });
       this.shadowRoot.addEventListener("click", (ev) => {
+        // fermeture du message du compteur : il ne revient que si son texte change
+        if (ev.target.closest("[data-msg-close]")) {
+          this._msgClosed = this._msgText || "";
+          if (!this._config.message_test) { try { localStorage.setItem("zlinky-card:message-ferme", this._msgClosed); } catch (e) { /* stockage indisponible */ } }
+          this._render(true);
+          return;
+        }
         // ‹ › : jour précédent / suivant ; « Aujourd'hui » : retour au jour en cours
         const nav = ev.target.closest("[data-nav]");
         if (nav) {
@@ -1459,7 +1486,9 @@ class ZlinkyCard extends LinkyLook {
   _signature() {
     const c = this._config;
     const ids = [...this._parts().map((p) => p.id), c.power_entity, c.tariff_entity, c.current_entity, c.voltage_entity,
-      c.max_power_entity, c.lqi_entity, c.ccasn_entity, c.ccasn_prev_entity, c.tempo_today, c.tempo_tomorrow, c.ecowatt];
+      c.max_power_entity, c.lqi_entity, c.ccasn_entity, c.ccasn_prev_entity, c.message_entity, c.message2_entity,
+      c.tempo_today, c.tempo_tomorrow, c.ecowatt];
+    ids.push(c.message_test ? "test" : "", this._msgClosed || "");
     return `${c.theme}|${this._hass?.themes?.darkMode}|${this._loadedAt}|` + ids.map((id) => this._state(id)?.last_updated || "-").join("|");
   }
 
@@ -1657,6 +1686,7 @@ class ZlinkyCard extends LinkyLook {
     this._all = all;
     if (this._selected >= all.length) this._selected = 0;
     this.shadowRoot.innerHTML = `${STYLE}${ZL_STYLE}<ha-card class="${mode}"${hcHpStyle(c)}>
+      ${this._message()}
       ${this._header(null)}
       ${this._zlHero(all[this._selected], all[this._selected + 1])}
       ${this._hoursChart(all[this._selected])}
@@ -1702,6 +1732,37 @@ class ZlinkyCard extends LinkyLook {
            <div class="split-l"><span class="k-hc">Heures creuses ${fmt(day.hc, 2)} kWh</span><span class="k-hp">Heures pleines ${fmt(day.hp, 2)} kWh</span></div></div>`
         : ""}
     </section>`;
+  }
+
+  /** Message du fournisseur ou du distributeur (MSG1, MSG2 du compteur), en fenêtre sur la carte.
+   *  « PAS DE MESSAGE » et les valeurs vides sont ignorés ; message_test affiche un exemple (essai depuis l'éditeur). */
+  _message() {
+    const c = this._config;
+    if (c.show_messages === false && !c.message_test) return "";
+    const clean = (id) => {
+      const v = String(this._state(id)?.state ?? "").trim();
+      return !v || /^(unknown|unavailable|none|pas de message)$/i.test(v) ? "" : v;
+    };
+    const lines = c.message_test
+      ? ["Message d'essai de la carte ZLinky", "Ex. : POINTE MOBILE DEMAIN"]
+      : [clean(c.message_entity), clean(c.message2_entity)].filter(Boolean);
+    this._msgText = lines.join(" · ");
+    if (!lines.length) return "";
+    if (this._msgClosed === undefined) {
+      try { this._msgClosed = localStorage.getItem("zlinky-card:message-ferme") || ""; } catch (e) { this._msgClosed = ""; }
+    }
+    if (this._msgClosed === this._msgText) return "";
+    return `<div class="zl-msg" role="alertdialog" aria-label="Message du compteur">
+      <div class="zl-msg-box">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 2H4a2 2 0 0 0-2 2v18l4-4h14a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2zm-7 12h-2v-2h2v2zm0-4h-2V6h2v4z"/></svg>
+        <div class="zl-msg-t">
+          <strong>${c.message_test ? "Essai : message du compteur" : "Message du compteur"}</strong>
+          ${lines.map((l) => `<span>${esc(l)}</span>`).join("")}
+          <small>Envoyé par le fournisseur ou le distributeur et affiché sur le Linky.</small>
+        </div>
+        <button class="zl-msg-x" data-msg-close title="Fermer" aria-label="Fermer le message">×</button>
+      </div>
+    </div>`;
   }
 
   /** Consommation heure par heure du jour affiché : hier et aujourd'hui sont déjà lus, les autres jours à la demande. */
@@ -1879,6 +1940,10 @@ const ZL_SCHEMA = [
   { name: "show_ccasn", selector: { boolean: {} } },
   { name: "ccasn_prev_entity", selector: { entity: { domain: "sensor" } } },
   { name: "show_ccasn_prev", selector: { boolean: {} } },
+  { name: "message_entity", selector: { entity: { domain: "sensor" } } },
+  { name: "message2_entity", selector: { entity: { domain: "sensor" } } },
+  { name: "show_messages", selector: { boolean: {} } },
+  { name: "message_test", selector: { boolean: {} } },
   { name: "title", selector: { text: {} } },
   SCHEMA.find((s) => s.name === "days"),
   { name: "subscribed_power", selector: { number: { min: 3, max: 36, step: 3, mode: "box", unit_of_measurement: "kVA" } } },
@@ -1917,6 +1982,10 @@ const ZL_LABELS = {
   show_ccasn: "Afficher la puissance des 30 dernières minutes",
   ccasn_prev_entity: "Puissance active des 30 minutes précédentes (CCASN-1, facultatif)",
   show_ccasn_prev: "Afficher la puissance des 30 minutes précédentes",
+  message_entity: "Message 1 du compteur (MSG1, facultatif)",
+  message2_entity: "Message 2 du compteur (MSG2, facultatif)",
+  show_messages: "Afficher les messages du compteur en fenêtre (fermeture par ×, retour si le message change)",
+  message_test: "Tester la fenêtre de message (à couper après l'essai)",
   show_meter: "Afficher le compteur en direct (puissance, courant, tarif et prix, index, part HC)",
   hc_blue_entity: "Tempo : index HC jour bleu",
   hp_blue_entity: "Tempo : index HP jour bleu",
