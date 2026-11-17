@@ -15,7 +15,7 @@
  * © 2026 Marlboro62.
  */
 (() => {
-const CARD_VERSION = "0.1.0-beta.1";
+const CARD_VERSION = "0.1.0-beta.2";
 
 /* ---------------------------------------------------------------- données */
 
@@ -1201,13 +1201,34 @@ const ZL = {
   },
 };
 
+/** Index du ZLinky : clé de configuration, part (hc, hp, base) et couleur Tempo. */
+const ZL_TEMPO_PARTS = ["blue", "white", "red"].flatMap((color) =>
+  ["hc", "hp"].map((kind) => ({ key: `${kind}_${color}`, conf: `${kind}_${color}_entity`, kind, color })));
+
+/** Couleur Tempo écrite par le ZLinky (BLEU, BLAN, ROUG…), par RTE (blue…) ou en français. */
+const zlColor = (v) => {
+  const s = String(v ?? "").toLowerCase();
+  if (/^(blue|bleu|bbr.*jb|hcjb|hpjb)/.test(s) || s.includes("bleu")) return "blue";
+  if (/^(white|blan|bbr.*jw|hcjw|hpjw)/.test(s) || s.includes("blanc")) return "white";
+  if (/^(red|roug|bbr.*jr|hcjr|hpjr)/.test(s) || s.includes("rouge")) return "red";
+  return null;
+};
+
+/** Index proposés par l'éditeur et dans le message d'erreur : capteurs d'énergie en Wh ou kWh. */
+const zlEnergyIds = (hass) =>
+  Object.entries(hass?.states || {})
+    .filter(([id, st]) => id.startsWith("sensor.") && /^(k|M)?Wh$/.test(String(st.attributes?.unit_of_measurement || "")))
+    .map(([id]) => id);
+
 const ZL_DEFAULTS = {
   title: "ZLinky",
   days: 14,
   hc_entity: "",
   hp_entity: "",
   base_entity: "",
+  ...Object.fromEntries(ZL_TEMPO_PARTS.map((p) => [p.conf, ""])),
   power_entity: "",
+  tariff_entity: "",
   subscribed_power: null,
   show_cost: true,
   energy_prices: true,
@@ -1234,21 +1255,31 @@ class ZlinkyCard extends LinkyLook {
     return document.createElement("zlinky-card-editor");
   }
 
-  /** Repère les index du LiXee (ZHA : tier1/tier2 summation delivered ; Zigbee2MQTT : hchc/hchp). */
+  /** Repère les index du LiXee. ZHA : tier1 à tier6 summation delivered (Tempo : HC bleu, HP bleu, HC blanc,
+   *  HP blanc, HC rouge, HP rouge) ; Zigbee2MQTT : hchc / hchp, bbrhcjb … bbrhpjr, base. */
   static getStubConfig(hass) {
-    const ids = Object.keys(hass?.states || {}).filter((id) => id.startsWith("sensor."));
+    const ids = zlEnergyIds(hass).filter((id) => /linky|lixee|teleinfo|tic/i.test(id));
     const pick = (re) => ids.find((id) => re.test(id)) || "";
-    const hc = pick(/(linky|lixee).*(tier_?1_summation|hchc|_hc$|heures_creuses)/i);
-    const hp = pick(/(linky|lixee).*(tier_?2_summation|hchp|_hp$|heures_pleines)/i);
-    const base = hc && hp ? "" : pick(/(linky|lixee).*(summation_delivered|base|index)/i);
-    return { hc_entity: hc, hp_entity: hp, base_entity: base, power_entity: pick(/(linky|lixee).*(apparent_power|papp|puissance_apparente)/i) };
+    const tier = (n) => pick(new RegExp(`(tier_?${n}_summation|summation_delivered_tier_?${n}|tier_?${n}$)`, "i"));
+    const out = { power_entity: Object.keys(hass?.states || {}).find((id) => /(linky|lixee).*(apparent_power|papp|puissance_apparente)/i.test(id)) || "" };
+    const z2m = { hc_blue: /bbrhcjb/i, hp_blue: /bbrhpjb/i, hc_white: /bbrhcjw/i, hp_white: /bbrhpjw/i, hc_red: /bbrhcjr/i, hp_red: /bbrhpjr/i };
+    if (tier(6) || pick(z2m.hp_red)) {
+      ZL_TEMPO_PARTS.forEach((p, i) => { out[p.conf] = tier(i + 1) || pick(z2m[p.key]); });
+      return out;
+    }
+    const hc = tier(1) || pick(/hchc|_hc$|heures_creuses/i);
+    const hp = tier(2) || pick(/hchp|_hp$|heures_pleines/i);
+    if (hc && hp) return { ...out, hc_entity: hc, hp_entity: hp };
+    return { ...out, base_entity: pick(/summation_delivered|base|index/i) };
   }
 
   setConfig(config) {
     const c = { ...ZL_DEFAULTS, ...(config || {}) };
-    if (!(c.hc_entity && c.hp_entity) && !c.base_entity) {
-      throw new Error("Indiquez les index du ZLinky : heures creuses et heures pleines (hc_entity, hp_entity), ou Base (base_entity).");
+    if (!ZL_TEMPO_PARTS.some((p) => c[p.conf]) && !(c.hc_entity && c.hp_entity) && !c.base_entity) {
+      throw new Error("Indiquez les index du ZLinky : Tempo (hc_blue_entity … hp_red_entity), heures creuses et heures pleines (hc_entity, hp_entity), ou Base (base_entity).");
     }
+    // Contrat Tempo : couleurs des jours affichées (pastilles du graphique, détail), sauf si coupé dans la configuration
+    if (ZL_TEMPO_PARTS.some((p) => c[p.conf]) && !("show_tempo" in (config || {}))) c.show_tempo = true;
     this._config = { ...c, days: Number(c.days || ZL_DEFAULTS.days) };
     this._baseConfig = this._config;
     this._selected = 0;
@@ -1283,9 +1314,13 @@ class ZlinkyCard extends LinkyLook {
     clearInterval(this._tick);
   }
 
-  _ids() {
+  /** Index lus : Tempo (jusqu'à 6), sinon HC et HP, sinon Base. */
+  _parts() {
     const c = this._config;
-    return c.base_entity && !(c.hc_entity && c.hp_entity) ? { base: c.base_entity } : { hc: c.hc_entity, hp: c.hp_entity };
+    const tempo = ZL_TEMPO_PARTS.filter((p) => c[p.conf]).map((p) => ({ ...p, id: c[p.conf] }));
+    if (tempo.length) return tempo;
+    if (c.hc_entity && c.hp_entity) return [{ key: "hc", kind: "hc", color: null, id: c.hc_entity }, { key: "hp", kind: "hp", color: null, id: c.hp_entity }];
+    return [{ key: "base", kind: "base", color: null, id: c.base_entity }];
   }
 
   /** Statistiques par jour (depuis le 1er janvier de l'an dernier), par heure (hier et aujourd'hui),
@@ -1295,8 +1330,8 @@ class ZlinkyCard extends LinkyLook {
     this._loading = true;
     try {
       const now = new Date();
-      const ids = this._ids();
-      const list = Object.values(ids);
+      const parts = this._parts();
+      const list = parts.map((p) => p.id);
       const yearStart = new Date(now.getFullYear() - 1, 0, 1);
       const yesterday = new Date(ZL.dayOf(now).getTime() - ZL.DAY);
       const call = (start, period, types, statistic_ids, units) =>
@@ -1323,7 +1358,7 @@ class ZlinkyCard extends LinkyLook {
       if (this._config.show_cost && this._config.energy_prices !== false) {
         prefs = await this._hass.callWS({ type: "energy/get_prefs" }).catch(() => null);
       }
-      this._stats = { daily: daily || {}, hourly: hourly || {}, power: power?.[pw] || [], prefs, ids, at: now };
+      this._stats = { daily: daily || {}, hourly: hourly || {}, power: power?.[pw] || [], prefs, parts, at: now };
       this._error = null;
     } catch (e) {
       this._error = e?.message || String(e);
@@ -1335,50 +1370,51 @@ class ZlinkyCard extends LinkyLook {
 
   _signature() {
     const c = this._config;
-    const ids = [c.hc_entity, c.hp_entity, c.base_entity, c.power_entity, c.tempo_today, c.tempo_tomorrow, c.ecowatt];
+    const ids = [...this._parts().map((p) => p.id), c.power_entity, c.tariff_entity, c.tempo_today, c.tempo_tomorrow, c.ecowatt];
     return `${c.theme}|${this._hass?.themes?.darkMode}|${this._loadedAt}|` + ids.map((id) => this._state(id)?.last_updated || "-").join("|");
   }
 
-  /** Jours, du plus récent (aujourd'hui, en direct) au plus ancien. */
+  /** Jours, du plus récent (aujourd'hui, en direct) au plus ancien. Chaque jour garde la consommation de
+   *  chaque index (parts) pour le coût, et sa couleur Tempo (index de la couleur qui a tourné ce jour-là). */
   _days() {
     const s = this._stats;
     const now = new Date();
     const today = ZL.dayOf(now);
     const byDay = new Map();
     const day = (k, date) => {
-      if (!byDay.has(k)) byDay.set(k, { date, total: null, hc: null, hp: null, mp: null, mpTime: null, mpOver: false, tempo: null, offerCost: null });
+      if (!byDay.has(k)) byDay.set(k, { date, total: null, hc: null, hp: null, mp: null, mpTime: null, mpOver: false, tempo: null, offerCost: null, parts: {} });
       return byDay.get(k);
     };
-    for (const [part, id] of Object.entries(s.ids)) {
-      for (const row of s.daily[id] || []) {
+    const add = (d, part, value) => {
+      d.parts[part.key] = (d.parts[part.key] || 0) + value;
+      if (part.kind === "base") d.total = (d.total || 0) + value;
+      else d[part.kind] = (d[part.kind] || 0) + value;
+    };
+    for (const part of s.parts) {
+      for (const row of s.daily[part.id] || []) {
         const d = ZL.dayOf(ZL.start(row));
         if (d >= today || !Number.isFinite(row.change)) continue;
-        day(ZL.key(d), d)[part === "base" ? "total" : part] = row.change;
+        add(day(ZL.key(d), d), part, row.change);
       }
     }
     // Aujourd'hui : heures déjà enregistrées + écart entre l'index actuel et la dernière heure enregistrée
-    const live = { };
-    const sameTime = {};
-    const dayAgo = now.getTime() - ZL.DAY;
-    for (const [part, id] of Object.entries(s.ids)) {
-      const rows = s.hourly[id] || [];
-      let sum = 0, last = null, prev = 0;
-      for (const row of rows) {
-        const t = ZL.start(row);
-        if (t >= today) { if (Number.isFinite(row.change)) sum += row.change; }
-        else if (t.getTime() + 3600000 <= dayAgo && Number.isFinite(row.change)) prev += row.change;
-        last = row;
-      }
-      const cur = ZL.kwh(this._state(id));
-      if (cur !== null && last && Number.isFinite(last.state) && ZL.start(last).getTime() + 3600000 >= today.getTime()) sum += Math.max(0, cur - last.state);
-      live[part] = sum;
-      sameTime[part] = prev;
-    }
     const t = day(ZL.key(today), today);
     t.today = true;
-    if (s.ids.base) t.total = live.base;
-    else { t.hc = live.hc; t.hp = live.hp; }
-    this._yesterdaySameTime = s.ids.base ? sameTime.base : (sameTime.hc || 0) + (sameTime.hp || 0);
+    let sameTime = 0;
+    const dayAgo = now.getTime() - ZL.DAY;
+    for (const part of s.parts) {
+      let sum = 0, last = null;
+      for (const row of s.hourly[part.id] || []) {
+        const at = ZL.start(row);
+        if (at >= today) { if (Number.isFinite(row.change)) sum += row.change; }
+        else if (at.getTime() + 3600000 <= dayAgo && Number.isFinite(row.change)) sameTime += row.change;
+        last = row;
+      }
+      const cur = ZL.kwh(this._state(part.id));
+      if (cur !== null && last && Number.isFinite(last.state) && ZL.start(last).getTime() + 3600000 >= today.getTime()) sum += Math.max(0, cur - last.state);
+      if (sum > 0 || part.kind !== "base" || !s.parts.some((p) => p.color)) add(t, part, sum);
+    }
+    this._yesterdaySameTime = sameTime;
     // Pic de puissance apparente par jour
     const unit = this._state(this._config.power_entity)?.attributes?.unit_of_measurement;
     const subPower = MED.num(this._config.subscribed_power);
@@ -1391,7 +1427,17 @@ class ZlinkyCard extends LinkyLook {
       x.mpOver = subPower ? mp > subPower : false;
     }
     const all = [...byDay.values()].sort((a, b) => b.date - a.date);
-    all.forEach((d) => { if (d.total === null && d.hc !== null && d.hp !== null) d.total = d.hc + d.hp; });
+    all.forEach((d) => {
+      if (d.total === null && d.hc !== null && d.hp !== null) d.total = d.hc + d.hp;
+      // Couleur Tempo du jour : celle dont les index ont le plus tourné
+      let best = 0;
+      for (const part of s.parts) {
+        const v = d.parts[part.key] || 0;
+        if (part.color && v > best) { best = v; d.tempo = part.color; }
+      }
+    });
+    // Aujourd'hui : la période en cours du ZLinky (HPJB…) fait foi, le jour Tempo commençant à 6 h
+    t.tempo = zlColor(this._state(this._config.tariff_entity)?.state) || t.tempo;
     return all;
   }
 
@@ -1432,18 +1478,43 @@ class ZlinkyCard extends LinkyLook {
     };
   }
 
-  /** Prix : ceux saisis dans la carte d'abord, sinon ceux du tableau Énergie. */
-  _zlPrices() {
+  /** Prix de chaque index : saisi dans la carte (HC, HP, Base) d'abord, puis tableau Énergie, puis, pour Tempo,
+   *  les capteurs de prix Tempo (price_prefix, comme la carte Enedis Linky New). */
+  _partPrices() {
     const c = this._config;
     const manual = manualPrices(c);
-    if (manual) return { prices: manual, source: "card" };
-    if (c.energy_prices === false || !this._stats?.prefs) return { prices: null, source: null };
-    const ids = this._stats.ids;
-    const get = (id) => (id ? ZL.energyPrice(this._stats.prefs, id, this._hass) : null);
-    const hc = get(ids.hc), hp = get(ids.hp), base = get(ids.base);
-    if (hc !== null && hp !== null) return { prices: { hc, hp, base: null }, source: "energy" };
-    if (base !== null) return { prices: { hc: null, hp: null, base }, source: "energy" };
-    return { prices: null, source: null };
+    const prefs = c.energy_prices !== false ? this._stats?.prefs : null;
+    const out = {};
+    const used = new Set();
+    for (const part of this._stats.parts) {
+      let price = null, from = null;
+      if (manual && !part.color) {
+        price = part.kind === "base" ? manual.base : manual[part.kind];
+        from = "card";
+      }
+      if (price === null && prefs) { price = ZL.energyPrice(prefs, part.id, this._hass); from = "energy"; }
+      if (price === null && part.color) {
+        price = MED.num(this._state(`${c.price_prefix}${part.color}_${part.kind}`)?.state);
+        from = "tempo";
+      }
+      out[part.key] = price;
+      if (price !== null) used.add(from);
+    }
+    this._priceSource = [...used];
+    return out;
+  }
+
+  /** Coût d'un jour : somme des index × leur prix ; inconnu si un index qui a tourné n'a pas de prix. */
+  _partCost(d, prices) {
+    let cost = 0, any = false;
+    for (const part of this._stats.parts) {
+      const v = d.parts[part.key];
+      if (!v) continue;
+      if (prices[part.key] === null || prices[part.key] === undefined) return null;
+      cost += v * prices[part.key];
+      any = true;
+    }
+    return any ? cost : d.total === 0 ? 0 : null;
   }
 
   _render(force) {
@@ -1453,11 +1524,14 @@ class ZlinkyCard extends LinkyLook {
     this._sig = sig;
     const c = this._config;
     const mode = themeClass(c.theme, this._hass);
-    const missing = Object.values(this._ids()).filter((id) => !this._state(id));
+    const missing = this._parts().map((p) => p.id).filter((id) => !this._state(id));
     if (missing.length) {
+      // index du ZLinky trouvés dans Home Assistant, pour aider à choisir
+      const found = zlEnergyIds(this._hass).filter((id) => /linky|lixee|teleinfo|tic/i.test(id)).slice(0, 12);
       this.shadowRoot.innerHTML = `${STYLE}<ha-card class="${mode}"><div class="empty">
         <strong>Entité introuvable : ${esc(missing.join(", "))}</strong>
-        <span>Choisissez les index du ZLinky (heures creuses et heures pleines, ou Base) dans la configuration de la carte.</span></div></ha-card>`;
+        <span>Choisissez les index du ZLinky dans l'éditeur de la carte : Tempo (6 index), heures creuses et heures pleines, ou Base.</span>
+        ${found.length ? `<span>Index trouvés : ${found.map((id) => `<code>${esc(id)}</code>`).join(", ")}</span>` : ""}</div></ha-card>`;
       return;
     }
     if (!this._stats) {
@@ -1470,14 +1544,13 @@ class ZlinkyCard extends LinkyLook {
     const a = this._aggregates(all);
     const base = all.some((d) => d.total !== null) && !all.some((d) => d.hc !== null && d.hp !== null);
     this._base = base;
-    const { prices, source } = c.show_cost ? this._zlPrices() : { prices: null, source: null };
-    this._priceSource = source;
+    const prices = c.show_cost ? this._partPrices() : null;
     const sub = c.show_cost ? positivePrice(c.subscription_price) : null;
     this._subscription = sub;
     all.forEach((d) => {
       d.est = null;
       d.costEst = null;
-      d.cost = prices ? manualCost(d, prices) : null;
+      d.cost = prices ? this._partCost(d, prices) : null;
       if (sub !== null && d.date) {
         const full = sub / new Date(d.date.getFullYear(), d.date.getMonth() + 1, 0).getDate();
         // aujourd'hui : abonnement au prorata de l'heure
@@ -1495,7 +1568,7 @@ class ZlinkyCard extends LinkyLook {
       ${this._selected > 0 ? this._detail(shown[this._selected]) : ""}
       ${c.show_power !== false ? this._power(shown) : ""}
       ${this._ecowatt()}
-      ${this._zlFooter(prices)}
+      ${this._zlFooter(all[1])}
     </ha-card>`;
   }
 
@@ -1519,12 +1592,31 @@ class ZlinkyCard extends LinkyLook {
           ? `<div class="cost">${euro(day.cost)}</div><div class="cost-l">coût depuis minuit${day.sub ? `, dont abonnement ${euro(day.sub)}` : ""}</div>`
           : `<div class="cost none">—</div><div class="cost-l">prix introuvables (tableau Énergie ou carte)</div>`}
         ${this._livePower()}
+        ${this._tariff()}
       </div>
       ${split
-        ? `<div class="split"><div class="bar"><i class="hc" style="width:${hcPct}%"></i><i class="hp" style="width:${100 - hcPct}%"></i></div>
+        ? `<div class="split${TEMPO[day.tempo] ? ` tb-${day.tempo}` : ""}"><div class="bar"><i class="hc" style="width:${hcPct}%"></i><i class="hp" style="width:${100 - hcPct}%"></i></div>
            <div class="split-l"><span class="k-hc">Heures creuses ${fmt(day.hc, 2)} kWh</span><span class="k-hp">Heures pleines ${fmt(day.hp, 2)} kWh</span></div></div>`
         : ""}
     </section>`;
+  }
+
+  /** Période tarifaire en cours (PTEC du ZLinky : HP JB, HC JR…), facultative. */
+  _tariff() {
+    const st = this._state(this._config.tariff_entity);
+    if (!st || ["unknown", "unavailable", ""].includes(String(st.state))) return "";
+    return `<div class="hero-p">Période : ${esc(st.state)}</div>`;
+  }
+
+  /** Pastilles Tempo : accepte aussi les couleurs écrites par le ZLinky (BLEU, BLAN, ROUG). */
+  _pill(entity, label) {
+    let st = this._state(entity);
+    // sans capteur RTE pour aujourd'hui : couleur de la période en cours du ZLinky
+    if (!st && label === "Aujourd'hui") { st = this._state(this._config.tariff_entity); entity = this._config.tariff_entity; }
+    const t = st ? TEMPO[zlColor(st.state)] : null;
+    return `<div class="pill ${t ? t.cls : "t-none"}" title="${esc(entity)}">
+      <span class="dot"></span><span class="pill-l">${label}</span>
+      <span class="pill-v">${t ? t.label : "Non publié"}</span></div>`;
   }
 
   _livePower() {
@@ -1534,13 +1626,15 @@ class ZlinkyCard extends LinkyLook {
     return kva !== null ? `<div class="hero-p">Puissance actuelle ${fmt(kva, 2)} kVA</div>` : "";
   }
 
-  _zlFooter(prices) {
+  _zlFooter(yesterday) {
     const bits = ["Données du ZLinky en direct (statistiques Home Assistant)"];
     if (this._config.show_cost) {
       const abo = this._subscription ? `abonnement compris (${euro(this._subscription)}/mois)` : "hors abonnement";
-      bits.push(!prices ? "prix introuvables, coûts masqués"
-        : this._priceSource === "card" ? `coûts estimés ${abo}, au prix saisi dans la carte`
-        : `coûts estimés ${abo}, au prix du tableau Énergie`);
+      const src = { card: "saisi dans la carte", energy: "du tableau Énergie", tempo: "Tempo du jour" };
+      const from = (this._priceSource || []).map((k) => src[k]).filter(Boolean);
+      bits.push(!from.length || (yesterday && yesterday.total && yesterday.cost === null)
+        ? "prix introuvables pour certains index, coûts masqués"
+        : `coûts estimés ${abo}, au prix ${from.join(" et ")}`);
     }
     return `<footer>${bits.join(", ")}.</footer>`;
   }
@@ -1552,7 +1646,9 @@ const ZL_SCHEMA = [
   { name: "hc_entity", selector: { entity: { domain: "sensor" } } },
   { name: "hp_entity", selector: { entity: { domain: "sensor" } } },
   { name: "base_entity", selector: { entity: { domain: "sensor" } } },
+  ...ZL_TEMPO_PARTS.map((p) => ({ name: p.conf, selector: { entity: { domain: "sensor" } } })),
   { name: "power_entity", selector: { entity: { domain: "sensor" } } },
+  { name: "tariff_entity", selector: { entity: { domain: "sensor" } } },
   { name: "title", selector: { text: {} } },
   SCHEMA.find((s) => s.name === "days"),
   { name: "subscribed_power", selector: { number: { min: 3, max: 36, step: 3, mode: "box", unit_of_measurement: "kVA" } } },
@@ -1577,10 +1673,17 @@ const ZL_SCHEMA = [
 
 const ZL_LABELS = {
   ...LABELS,
-  hc_entity: "Index heures creuses du ZLinky (kWh ou Wh)",
+  hc_entity: "Index heures creuses du ZLinky (kWh ou Wh ; contrat HC/HP)",
   hp_entity: "Index heures pleines du ZLinky (kWh ou Wh)",
   base_entity: "Index Base du ZLinky (seulement sans heures creuses / pleines)",
   power_entity: "Puissance apparente du ZLinky (VA, facultatif : pic par jour et puissance actuelle)",
+  tariff_entity: "Période tarifaire en cours du ZLinky (PTEC, facultatif)",
+  hc_blue_entity: "Tempo : index HC jour bleu",
+  hp_blue_entity: "Tempo : index HP jour bleu",
+  hc_white_entity: "Tempo : index HC jour blanc",
+  hp_white_entity: "Tempo : index HP jour blanc",
+  hc_red_entity: "Tempo : index HC jour rouge",
+  hp_red_entity: "Tempo : index HP jour rouge",
   energy_prices: "Prendre les prix du tableau Énergie (les prix saisis ci-dessous restent prioritaires)",
   subscription_price: "Abonnement mensuel TTC (facultatif : ajouté au coût, au prorata)",
   hc_price: "Prix du kWh en heures creuses, TTC (facultatif : remplace celui du tableau Énergie)",
