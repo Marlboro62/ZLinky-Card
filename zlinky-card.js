@@ -15,7 +15,7 @@
  * © 2026 Marlboro62.
  */
 (() => {
-const CARD_VERSION = "0.1.0-beta.11";
+const CARD_VERSION = "0.1.0-beta.12";
 
 /* ---------------------------------------------------------------- données */
 
@@ -1241,6 +1241,9 @@ const ZL_DEFAULTS = {
   message2_entity: "",
   show_messages: true,
   show_details: true,
+  // sections rabattables du compteur : ouvertes au départ, puis l'état choisi est retenu par le navigateur
+  live_open: true,
+  index_open: true,
   message_test: false,
   show_meter: true,
   subscribed_power: null,
@@ -1303,6 +1306,14 @@ ha-card { position: relative; display: block; }
 .zl-hl { display: flex; justify-content: space-between; font-size: calc(.68rem * var(--fs, 1)); color: var(--med-muted); padding: 2px 2px 0; }
 .zl-wait { font-size: calc(.78rem * var(--fs, 1)); color: var(--med-muted); padding: 10px 2px; }
 .zl-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.zl-fold { display: grid; gap: 6px; }
+.zl-fold-h { display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 10px; border: 1px solid var(--med-line); border-radius: 10px;
+  background: transparent; color: var(--med-muted); font: inherit; font-size: calc(.78rem * var(--fs, 1)); cursor: pointer; text-align: left; }
+.zl-fold-h:hover, .zl-fold-h:focus-visible { border-color: var(--med-blue); color: var(--med-text); outline: none; }
+.zl-fold-h em { margin-left: auto; font-style: normal; font-weight: 700; color: var(--med-text); }
+.zl-fold-c { display: inline-block; transition: transform .15s; font-size: 1.1em; line-height: 1; }
+.zl-fold.open .zl-fold-c { transform: rotate(90deg); }
+@media (prefers-reduced-motion: reduce) { .zl-fold-c { transition: none; } }
 .zl-chip { flex: 1 1 auto; min-width: 92px; padding: 6px 10px; border-radius: 10px; border: 1px solid var(--med-line);
   background: var(--med-surface); display: flex; flex-direction: column; gap: 1px; }
 .zl-chip span { font-size: calc(.7rem * var(--fs, 1)); color: var(--med-muted); white-space: nowrap; }
@@ -1399,6 +1410,15 @@ class ZlinkyCard extends LinkyLook {
     if (!this.shadowRoot) {
       this.attachShadow({ mode: "open" });
       this.shadowRoot.addEventListener("click", (ev) => {
+        // sections rabattables (« En direct », « Index du compteur ») : état retenu par le navigateur
+        const fold = ev.target.closest("[data-fold]");
+        if (fold) {
+          const k = fold.dataset.fold;
+          this._folds = { ...this._folds, [k]: !this._isOpen(k) };
+          try { localStorage.setItem("zlinky-card:sections", JSON.stringify(this._folds)); } catch (e) { /* stockage indisponible */ }
+          this._render(true);
+          return;
+        }
         // fermeture du message du compteur : il ne revient que si son texte change
         if (ev.target.closest("[data-msg-close]")) {
           this._msgClosed = this._msgText || "";
@@ -1901,10 +1921,32 @@ class ZlinkyCard extends LinkyLook {
     if (idx.some((x) => x.p.kind === "hc") && total > 0) index.push(chip("Part HC (index)", `${fmt((hc / total) * 100, 1)} %`, "k-hc"));
     if (this._state(c.lqi_entity)) live.push(chip("Zigbee", `${fmt(num(c.lqi_entity), 0)} LQI`));
     if (!live.length && !index.length) return "";
+    const section = (key, title, chips, summary) => {
+      if (!chips.length) return "";
+      const open = this._isOpen(key);
+      return `<div class="zl-fold${open ? " open" : ""}">
+        <button class="zl-fold-h" data-fold="${key}" aria-expanded="${open}">
+          <span class="zl-fold-c" aria-hidden="true">›</span><span>${title}</span>${open ? "" : `<em>${summary}</em>`}
+        </button>
+        ${open ? `<div class="zl-row">${chips.join("")}</div>` : ""}
+      </div>`;
+    };
+    // résumé affiché quand la section est rabattue
+    const liveSum = [pw ? `${fmt(num(c.power_entity), 0)} ${esc(unit(c.power_entity, "VA"))}` : "", period ? esc(period.label) : ""].filter(Boolean).join(" · ");
+    const indexSum = idx.length > 1 ? `Total ${fmt(total, 0)} kWh` : idx.length ? `${fmt(idx[0].v, 0)} kWh` : "";
     return `<section class="zl-meter">
-      ${live.length ? `<div class="zl-row">${live.join("")}</div>` : ""}
-      ${index.length ? `<div class="zl-row">${index.join("")}</div>` : ""}
+      ${section("live", "En direct", live, liveSum)}
+      ${section("index", "Index du compteur", index, indexSum)}
     </section>`;
+  }
+
+  /** Section ouverte : choix fait sur la carte (retenu par le navigateur), sinon réglage de la carte. */
+  _isOpen(key) {
+    if (this._folds === undefined) {
+      try { this._folds = JSON.parse(localStorage.getItem("zlinky-card:sections") || "{}") || {}; } catch (e) { this._folds = {}; }
+    }
+    if (key in this._folds) return !!this._folds[key];
+    return this._config[`${key}_open`] !== false;
   }
 
   /** Période en cours : l'index qui tourne fait foi (LTARF peut rester figé côté Zigbee) ; sinon LTARF / PTEC. */
@@ -1987,6 +2029,8 @@ const ZL_SCHEMA = [
   { name: "subscribed_power", selector: { number: { min: 3, max: 36, step: 3, mode: "box", unit_of_measurement: "kVA" } } },
   { name: "show_meter", selector: { boolean: {} } },
   { name: "show_details", selector: { boolean: {} } },
+  { name: "live_open", selector: { boolean: {} } },
+  { name: "index_open", selector: { boolean: {} } },
   { name: "show_cost", selector: { boolean: {} } },
   { name: "energy_prices", selector: { boolean: {} } },
   { name: "subscription_price", selector: { number: { min: 0, max: 200, step: 0.01, mode: "box", unit_of_measurement: "€/mois" } } },
@@ -2025,6 +2069,8 @@ const ZL_LABELS = {
   message2_entity: "Message 2 du compteur (MSG2, facultatif)",
   show_messages: "Afficher les messages du compteur en fenêtre (fermeture par ×, retour si le message change)",
   message_test: "Tester la fenêtre de message (à couper après l'essai)",
+  live_open: "Section « En direct » ouverte au départ (rabattable d'un clic sur la carte)",
+  index_open: "Section « Index du compteur » ouverte au départ (rabattable d'un clic sur la carte)",
   show_details: "Afficher le détail du jour (énergie et coût par index, abonnement, total)",
   show_meter: "Afficher le compteur en direct (puissance, courant, tarif et prix, index, part HC)",
   hc_blue_entity: "Tempo : index HC jour bleu",
