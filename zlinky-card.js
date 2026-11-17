@@ -15,7 +15,7 @@
  * © 2026 Marlboro62.
  */
 (() => {
-const CARD_VERSION = "0.1.2-beta.1";
+const CARD_VERSION = "0.1.2-beta.2";
 
 /* ---------------------------------------------------------------- données */
 
@@ -1337,6 +1337,45 @@ ha-card.light .zl-chip.k-hp b { color: var(--med-hp-text, #b35619); }
 const ZL_RELOAD = 5 * 60000;
 const ZL_TIMEOUT = 60000;
 
+/** Lectures partagées entre toutes les cartes ZLinky de la page (tableau de bord et aperçu de l'éditeur) :
+ *  une même demande n'est envoyée qu'une fois par période de validité. L'historique de Home Assistant traite
+ *  les lectures une par une : des lectures en double font attendre toutes les cartes de statistiques. */
+const ZL_SHARED = new Map();
+const zlShared = (key, ttl, fn) => {
+  const hit = ZL_SHARED.get(key);
+  if (hit && Date.now() - hit.at < ttl) return hit.promise;
+  const promise = fn();
+  ZL_SHARED.set(key, { at: Date.now(), promise });
+  promise.catch(() => { if (ZL_SHARED.get(key)?.promise === promise) ZL_SHARED.delete(key); });
+  return promise;
+};
+
+/** Consommation par jour depuis le 1er janvier de l'an dernier. Les jours terminés ne changent plus : ils
+ *  sont gardés par le navigateur, et seuls les derniers jours sont redemandés (lecture lourde une seule fois). */
+const ZL_DAILY_KEEP = 2;
+async function zlDaily(call, ids, yearStart) {
+  const key = `zlinky-card:jours:v1:${ids.join(",")}`;
+  const today = ZL.dayOf(new Date()).getTime();
+  let kept = null;
+  try { kept = JSON.parse(localStorage.getItem(key) || "null"); } catch (e) { kept = null; }
+  const usable = kept && kept.from <= yearStart.getTime() && kept.rows && ids.every((id) => Array.isArray(kept.rows[id]));
+  // reprise : quelques jours avant le dernier jour gardé (Home Assistant peut encore compléter les dernières heures)
+  const from = usable ? new Date(Math.max(kept.from, kept.through - ZL_DAILY_KEEP * ZL.DAY)) : yearStart;
+  const fresh = (await call(from, "day", ["change"], ids, { energy: "kWh" })) || {};
+  const out = {};
+  for (const id of ids) {
+    const old = usable ? kept.rows[id].filter((r) => r.start < from.getTime()) : [];
+    const recent = (fresh[id] || []).map((r) => ({ start: ZL.start(r).getTime(), change: r.change }));
+    out[id] = [...old, ...recent].filter((r) => r.start >= yearStart.getTime());
+  }
+  // seuls les jours terminés sont gardés ; en cas de stockage plein ou indisponible, tout est relu la fois suivante
+  try {
+    const rows = Object.fromEntries(ids.map((id) => [id, out[id].filter((r) => r.start < today)]));
+    localStorage.setItem(key, JSON.stringify({ from: yearStart.getTime(), through: today, rows }));
+  } catch (e) { /* stockage indisponible */ }
+  return out;
+}
+
 class ZlinkyCard extends LinkyLook {
   static getConfigElement() {
     return document.createElement("zlinky-card-editor");
@@ -1409,10 +1448,16 @@ class ZlinkyCard extends LinkyLook {
     if (ZL_TEMPO_PARTS.some((p) => c[p.conf]) && !("show_tempo" in (config || {}))) c.show_tempo = true;
     this._config = { ...c, days: Number(c.days || ZL_DEFAULTS.days) };
     this._baseConfig = this._config;
-    this._selected = 0;
     this._sig = null;
-    this._stats = null;
-    this._loadedAt = 0;
+    // un réglage d'affichage ne relit pas les statistiques : seulement un changement des capteurs lus
+    const dataKey = this._dataKey();
+    if (dataKey !== this._lastDataKey) {
+      this._lastDataKey = dataKey;
+      this._selected = 0;
+      this._stats = null;
+      this._hours = {};
+      this._loadedAt = 0;
+    }
     if (!this.shadowRoot) {
       this.attachShadow({ mode: "open" });
       this.shadowRoot.addEventListener("click", (ev) => {
@@ -1469,6 +1514,13 @@ class ZlinkyCard extends LinkyLook {
     clearInterval(this._tick);
   }
 
+  /** Ce qui est lu dans l'historique : index, puissance, prix du tableau Énergie. */
+  _dataKey() {
+    const c = this._config;
+    return JSON.stringify([this._parts().map((p) => p.id), c.show_power !== false ? c.power_entity : "",
+      !!(c.show_cost && c.energy_prices !== false)]);
+  }
+
   /** Index lus : Tempo (jusqu'à 6), sinon HC et HP, sinon Base. */
   _parts() {
     const c = this._config;
@@ -1503,19 +1555,20 @@ class ZlinkyCard extends LinkyLook {
           types,
           ...(units ? { units } : {}),
         }));
-      const [daily, hourly] = await Promise.all([
-        call(yearStart, "day", ["change"], list, { energy: "kWh" }),
-        call(yesterday, "hour", ["change", "state"], list, { energy: "kWh" }),
-      ]);
+      // une lecture à la fois (pas en parallèle) : les autres cartes de statistiques passent entre deux
+      const ttl = ZL_RELOAD - 30000;
+      const ids = list.join(",");
+      const daily = await zlShared(`jours|${ids}`, ttl, () => zlDaily(call, list, yearStart));
+      const hourly = await zlShared(`heures|${ids}`, ttl, () => call(yesterday, "hour", ["change", "state"], list, { energy: "kWh" }));
       let power = null;
       const pw = this._config.power_entity;
       if (pw && this._config.show_power !== false) {
         const from = new Date(ZL.dayOf(now).getTime() - 31 * ZL.DAY);
-        power = await call(from, "day", ["max"], [pw]).catch(() => null);
+        power = await zlShared(`pic|${pw}`, ttl, () => call(from, "day", ["max"], [pw])).catch(() => null);
       }
       let prefs = null;
       if (this._config.show_cost && this._config.energy_prices !== false) {
-        prefs = await this._hass.callWS({ type: "energy/get_prefs" }).catch(() => null);
+        prefs = await zlShared("prix", ttl, () => this._hass.callWS({ type: "energy/get_prefs" })).catch(() => null);
       }
       this._stats = { daily: daily || {}, hourly: hourly || {}, power: power?.[pw] || [], prefs, parts, at: now };
       this._error = null;
