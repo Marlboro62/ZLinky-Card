@@ -37,7 +37,7 @@ Même présentation que la [Carte Enedis Linky New](https://github.com/Marlboro6
 ## Ce que la carte affiche
 
 - **Aujourd'hui, en direct** : consommation depuis minuit, répartition heures creuses / heures pleines, coût, puissance actuelle, et écart avec hier à la même heure.
-- **Compteur en direct** : puissance, courant, tension, pic du jour, tarif en cours avec son prix, chaque index (un par couleur et HC/HP en Tempo), total et part des heures creuses, qualité du lien Zigbee.
+- **Compteur en direct** : puissance apparente, puissance active des 30 dernières minutes et des 30 précédentes (chacune avec son interrupteur), courant, tension, pic du jour, tarif en cours avec son prix, chaque index (un par couleur et HC/HP en Tempo), total et part des heures creuses, qualité du lien Zigbee.
 - **Semaine, mois et année** jusqu'à hier, avec la projection du mois en cours.
 - **Comparaison avec l'an dernier** seulement si les statistiques couvrent presque toute la période (au moins 90 % des jours) : pas de « 0 kWh » ni de pourcentage trompeur sur une installation récente.
 - **Jours précédents** : les flèches ‹ › de l'encadré du haut (ou un clic sur une barre du graphique) affichent un autre jour, avec sa consommation **heure par heure** ; « Aujourd'hui » revient au jour en cours.
@@ -97,6 +97,8 @@ En Tempo, chaque jour prend la couleur de ses index : pastilles du graphique, d�
 | `current_entity`, `voltage_entity` | Courant (IRMS1) et tension (URMS1) | — |
 | `max_power_entity` | Puissance maximale du jour (SMAXSN) | — |
 | `lqi_entity` | Qualité du lien Zigbee (linkquality) | — |
+| `ccasn_entity`, `show_ccasn` | Puissance active moyenne de la demi-heure (CCASN), et son interrupteur | —, `true` |
+| `ccasn_prev_entity`, `show_ccasn_prev` | Puissance active de la demi-heure précédente (CCASN-1), et son interrupteur | —, `true` |
 | `show_meter` | Bloc « compteur en direct » | `true` |
 | `power_entity` | Puissance apparente (VA) : pic par jour et puissance actuelle | — |
 | `days` | Jours affichés dans le graphique : 7, 14 ou 31 | 14 |

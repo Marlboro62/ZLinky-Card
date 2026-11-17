@@ -15,7 +15,7 @@
  * © 2026 Marlboro62.
  */
 (() => {
-const CARD_VERSION = "0.1.0-beta.8";
+const CARD_VERSION = "0.1.0-beta.9";
 
 /* ---------------------------------------------------------------- données */
 
@@ -1233,6 +1233,10 @@ const ZL_DEFAULTS = {
   voltage_entity: "",
   max_power_entity: "",
   lqi_entity: "",
+  ccasn_entity: "",
+  ccasn_prev_entity: "",
+  show_ccasn: true,
+  show_ccasn_prev: true,
   show_meter: true,
   subscribed_power: null,
   show_cost: true,
@@ -1257,12 +1261,14 @@ const ZL_DEFAULTS = {
 /** Bloc « compteur en direct » : pastilles comme celles de l'ancien tableau de bord. */
 const ZL_STYLE = `<style>
 .zl-meter { margin: 10px 12px 0; display: grid; gap: 6px; }
-.zl-nav { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.zl-nav { display: flex; align-items: center; gap: 6px; flex-wrap: nowrap; min-width: 0; }
+.zl-nav .hero-l { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .zl-btn { border: 1px solid var(--med-line); background: var(--med-surface); color: var(--med-text); border-radius: 999px;
   min-width: 30px; height: 28px; padding: 0 9px; font: inherit; font-size: calc(.95rem * var(--fs, 1)); line-height: 1; cursor: pointer; }
 .zl-btn:hover:not([disabled]), .zl-btn:focus-visible { border-color: var(--med-blue); outline: none; }
 .zl-btn[disabled] { opacity: .35; cursor: default; }
-.zl-btn.zl-today { font-size: calc(.75rem * var(--fs, 1)); color: var(--med-blue); }
+.zl-btn.zl-today { font-size: calc(.72rem * var(--fs, 1)); color: var(--med-blue); padding: 0 8px; flex: none; }
+.zl-btn { flex: none; }
 .zl-hours svg { height: 90px; }
 .zl-hl { display: flex; justify-content: space-between; font-size: calc(.68rem * var(--fs, 1)); color: var(--med-muted); padding: 2px 2px 0; }
 .zl-wait { font-size: calc(.78rem * var(--fs, 1)); color: var(--med-muted); padding: 10px 2px; }
@@ -1308,6 +1314,9 @@ class ZlinkyCard extends LinkyLook {
       current_entity: find(/irms1?$|rms_current|_iinst$|courant/i),
       voltage_entity: find(/urms1?$|rms_voltage|tension/i),
       max_power_entity: find(/smaxsn$|smaxn$|pmax$/i),
+      // puissance active moyenne sur 30 minutes (CCASN) et celle des 30 minutes précédentes (CCASN-1)
+      ccasn_entity: find(/ccasn$/i),
+      ccasn_prev_entity: find(/ccasn_?1$/i),
       lqi_entity: Object.keys(hass?.states || {}).find((id) => /(linky|lixee).*(linkquality|_lqi$)/i.test(id)) || "",
     };
     // Période en cours : le capteur dont l'état ressemble à « HP BLEU », « HCJB »… (Zigbee2MQTT nomme parfois
@@ -1450,7 +1459,7 @@ class ZlinkyCard extends LinkyLook {
   _signature() {
     const c = this._config;
     const ids = [...this._parts().map((p) => p.id), c.power_entity, c.tariff_entity, c.current_entity, c.voltage_entity,
-      c.max_power_entity, c.lqi_entity, c.tempo_today, c.tempo_tomorrow, c.ecowatt];
+      c.max_power_entity, c.lqi_entity, c.ccasn_entity, c.ccasn_prev_entity, c.tempo_today, c.tempo_tomorrow, c.ecowatt];
     return `${c.theme}|${this._hass?.themes?.darkMode}|${this._loadedAt}|` + ids.map((id) => this._state(id)?.last_updated || "-").join("|");
   }
 
@@ -1674,7 +1683,7 @@ class ZlinkyCard extends LinkyLook {
       <div>
         <div class="zl-nav">
           <button class="zl-btn" data-nav="prev" title="Jour précédent" aria-label="Jour précédent"${this._selected >= (this._all?.length || 1) - 1 ? " disabled" : ""}>‹</button>
-          <span class="hero-l">${esc(cap(when))}${live ? " · en cours" : ""}</span>
+          <span class="hero-l" title="${esc(cap(when))}">${esc(cap(live ? when : day.date.toLocaleDateString("fr-FR", { weekday: "short", day: "numeric", month: "short" })))}${live ? " · en cours" : ""}</span>
           <button class="zl-btn" data-nav="next" title="Jour suivant" aria-label="Jour suivant"${live ? " disabled" : ""}>›</button>
           ${live ? "" : `<button class="zl-btn zl-today" data-nav="today">Aujourd'hui</button>`}
         </div>
@@ -1769,6 +1778,13 @@ class ZlinkyCard extends LinkyLook {
     if (this._state(c.current_entity)) live.push(chip("Courant", `${fmt(num(c.current_entity), 0)} ${esc(unit(c.current_entity, "A"))}`));
     if (this._state(c.voltage_entity)) live.push(chip("Tension", `${fmt(num(c.voltage_entity), 0)} ${esc(unit(c.voltage_entity, "V"))}`));
     if (this._state(c.max_power_entity)) live.push(chip("Pic du jour", `${fmt(num(c.max_power_entity), 0)} ${esc(unit(c.max_power_entity, "VA"))}`));
+    // puissance active moyenne de la demi-heure (CCASN) et de la précédente (CCASN-1), chacune avec son interrupteur
+    if (c.show_ccasn !== false && this._state(c.ccasn_entity)) {
+      live.push(chip("Puissance (30 min)", `${fmt(num(c.ccasn_entity), 0)} ${esc(unit(c.ccasn_entity, "W"))}`, "", "Puissance active moyenne de la demi-heure en cours (CCASN)"));
+    }
+    if (c.show_ccasn_prev !== false && this._state(c.ccasn_prev_entity)) {
+      live.push(chip("30 min précédentes", `${fmt(num(c.ccasn_prev_entity), 0)} ${esc(unit(c.ccasn_prev_entity, "W"))}`, "", "Puissance active moyenne de la demi-heure précédente (CCASN-1)"));
+    }
     // tarif en cours et son prix (index de la période en cours)
     const period = this._period();
     if (period) {
@@ -1859,6 +1875,10 @@ const ZL_SCHEMA = [
   { name: "voltage_entity", selector: { entity: { domain: "sensor" } } },
   { name: "max_power_entity", selector: { entity: { domain: "sensor" } } },
   { name: "lqi_entity", selector: { entity: { domain: "sensor" } } },
+  { name: "ccasn_entity", selector: { entity: { domain: "sensor" } } },
+  { name: "show_ccasn", selector: { boolean: {} } },
+  { name: "ccasn_prev_entity", selector: { entity: { domain: "sensor" } } },
+  { name: "show_ccasn_prev", selector: { boolean: {} } },
   { name: "title", selector: { text: {} } },
   SCHEMA.find((s) => s.name === "days"),
   { name: "subscribed_power", selector: { number: { min: 3, max: 36, step: 3, mode: "box", unit_of_measurement: "kVA" } } },
@@ -1893,6 +1913,10 @@ const ZL_LABELS = {
   voltage_entity: "Tension du ZLinky (URMS1, facultatif)",
   max_power_entity: "Puissance maximale du jour (SMAXSN, facultatif)",
   lqi_entity: "Qualité du lien Zigbee (linkquality, facultatif)",
+  ccasn_entity: "Puissance active moyenne sur 30 minutes (CCASN, facultatif)",
+  show_ccasn: "Afficher la puissance des 30 dernières minutes",
+  ccasn_prev_entity: "Puissance active des 30 minutes précédentes (CCASN-1, facultatif)",
+  show_ccasn_prev: "Afficher la puissance des 30 minutes précédentes",
   show_meter: "Afficher le compteur en direct (puissance, courant, tarif et prix, index, part HC)",
   hc_blue_entity: "Tempo : index HC jour bleu",
   hp_blue_entity: "Tempo : index HP jour bleu",
