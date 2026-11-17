@@ -32,7 +32,19 @@ Carte Lovelace pour la consommation électrique lue **en direct** par un **LiXee
 
 Même présentation que la [Carte Enedis Linky New](https://github.com/Marlboro62/content-card-linky-new), mais sans MyElectricalData ni Enedis : tout vient des statistiques de Home Assistant.
 
-![Aperçu de la carte ZLinky (données inventées)](images/apercu.png)
+**🎮 [Essayer la démo en ligne](https://marlboro62.github.io/ZLinky-Card/docs/demo.html)** : la vraie carte avec des données inventées, sans Home Assistant ni ZLinky (Tempo, heures creuses / pleines, Base, message du compteur, thème clair ou sombre).
+
+<p>
+  <img src="images/compacte.png" alt="Carte ZLinky, sections rabattues" width="49%">
+  <img src="images/detail.png" alt="Carte ZLinky, sections En direct et Index du compteur ouvertes" width="49%">
+</p>
+
+<p>
+  <img src="images/totaux.png" alt="Semaine, mois et année" width="49%">
+  <img src="images/historique.png" alt="Historique des 14 derniers jours" width="49%">
+</p>
+
+<sub>Captures d'une installation réelle en Tempo ; les valeurs des index du compteur sont masquées.</sub>
 
 ## Ce que la carte affiche
 
@@ -45,6 +57,7 @@ Même présentation que la [Carte Enedis Linky New](https://github.com/Marlboro6
 - **Graphique** des 7, 14 ou 31 derniers jours.
 - **Puissance maximale** par jour (avec la puissance apparente du ZLinky).
 - **EcoWatt** et **Tempo** (capteurs RTE), facultatifs.
+- **Sections rabattables** : En direct, Index du compteur, Semaine, mois et année, et Historique se replient d'un clic, avec un résumé sur la ligne du titre ; l'éditeur choisit celles ouvertes au chargement.
 - **Messages du compteur** : quand le fournisseur ou le distributeur envoie un message au Linky (MSG1, MSG2), il s'affiche en fenêtre sur la carte. Le bouton × la ferme ; elle ne revient que si le message change. « PAS DE MESSAGE » est ignoré. L'interrupteur **Tester la fenêtre de message** de l'éditeur affiche un exemple.
 
 ## Installation
