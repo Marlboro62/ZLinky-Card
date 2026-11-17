@@ -15,7 +15,7 @@
  * © 2026 Marlboro62.
  */
 (() => {
-const CARD_VERSION = "0.1.0-beta.4";
+const CARD_VERSION = "0.1.0-beta.5";
 
 /* ---------------------------------------------------------------- données */
 
@@ -1267,7 +1267,11 @@ class ZlinkyCard extends LinkyLook {
     const find = (re) => all.find((id) => re.test(id)) || "";
     // puissance apparente (ZHA apparent_power, Zigbee2MQTT SINSTS en mode standard, PAPP en mode historique)
     // et période en cours (LTARF en mode standard, PTEC en mode historique)
-    const out = { power_entity: find(/apparent_power|sinsts|papp|puissance_apparente/i), tariff_entity: find(/ltarf|ptec|tarif_en_cours|current_tarif/i) };
+    const out = { power_entity: find(/apparent_power|sinsts|papp|puissance_apparente/i), tariff_entity: "" };
+    // Période en cours : le capteur dont l'état ressemble à « HP BLEU », « HCJB »… (Zigbee2MQTT nomme parfois
+    // current_tarif le nom de l'option, TEMPO, et current_price la période en cours)
+    const periods = all.filter((id) => /ltarf|ptec|tarif|price|periode/i.test(id));
+    out.tariff_entity = periods.find((id) => /\bH[CP]|^H[CP]/i.test(String(hass.states[id]?.state || ""))) || find(/ltarf|ptec/i);
     // Zigbee2MQTT : mode historique (BBRHCJB…) ou mode standard (index nommés « HC BLEU »…)
     const z2m = {
       hc_blue: /bbrhcjb|hc_?bleu|hcjb/i, hp_blue: /bbrhpjb|hp_?bleu|hpjb/i,
