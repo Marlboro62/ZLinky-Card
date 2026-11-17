@@ -15,7 +15,7 @@
  * © 2026 Marlboro62.
  */
 (() => {
-const CARD_VERSION = "0.1.0-beta.5";
+const CARD_VERSION = "0.1.0-beta.6";
 
 /* ---------------------------------------------------------------- données */
 
@@ -1229,6 +1229,11 @@ const ZL_DEFAULTS = {
   ...Object.fromEntries(ZL_TEMPO_PARTS.map((p) => [p.conf, ""])),
   power_entity: "",
   tariff_entity: "",
+  current_entity: "",
+  voltage_entity: "",
+  max_power_entity: "",
+  lqi_entity: "",
+  show_meter: true,
   subscribed_power: null,
   show_cost: true,
   energy_prices: true,
@@ -1249,6 +1254,26 @@ const ZL_DEFAULTS = {
   font_size: 100,
 };
 
+/** Bloc « compteur en direct » : pastilles comme celles de l'ancien tableau de bord. */
+const ZL_STYLE = `<style>
+.zl-meter { margin: 10px 12px 0; display: grid; gap: 6px; }
+.zl-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.zl-chip { flex: 1 1 auto; min-width: 92px; padding: 6px 10px; border-radius: 10px; border: 1px solid var(--med-line);
+  background: var(--med-surface); display: flex; flex-direction: column; gap: 1px; }
+.zl-chip span { font-size: calc(.7rem * var(--fs, 1)); color: var(--med-muted); white-space: nowrap; }
+.zl-chip b { font-size: calc(.86rem * var(--fs, 1)); font-weight: 700; white-space: nowrap; }
+.zl-chip.k-hc { border-color: color-mix(in srgb, var(--med-hc) 55%, var(--med-line)); }
+.zl-chip.k-hp { border-color: color-mix(in srgb, var(--med-hp) 55%, var(--med-line)); }
+.zl-chip.k-hc b { color: var(--med-hc-text, #8fb0f0); }
+.zl-chip.k-hp b { color: var(--med-hp-text, #eaa070); }
+ha-card.light .zl-chip.k-hc b { color: var(--med-hc-text, #2f5fb8); }
+ha-card.light .zl-chip.k-hp b { color: var(--med-hp-text, #b35619); }
+.zl-chip[class*="tb-"] span::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; vertical-align: middle; }
+.zl-chip.tb-blue span::before { background: #3b82f6; }
+.zl-chip.tb-white span::before { background: #f1f5f9; box-shadow: 0 0 0 1px #94a3b8; }
+.zl-chip.tb-red span::before { background: #ef4444; }
+</style>`;
+
 /** Statistiques relues toutes les 5 minutes : l'index du jour, lui, suit l'état du capteur en direct. */
 const ZL_RELOAD = 5 * 60000;
 
@@ -1267,7 +1292,15 @@ class ZlinkyCard extends LinkyLook {
     const find = (re) => all.find((id) => re.test(id)) || "";
     // puissance apparente (ZHA apparent_power, Zigbee2MQTT SINSTS en mode standard, PAPP en mode historique)
     // et période en cours (LTARF en mode standard, PTEC en mode historique)
-    const out = { power_entity: find(/apparent_power|sinsts|papp|puissance_apparente/i), tariff_entity: "" };
+    const out = {
+      power_entity: find(/apparent_power|sinsts|papp|puissance_apparente/i),
+      tariff_entity: "",
+      // courant, tension, puissance maximale du jour (SMAXSN, pas celle de la veille SMAXSN-1), qualité du lien Zigbee
+      current_entity: find(/irms1?$|rms_current|_iinst$|courant/i),
+      voltage_entity: find(/urms1?$|rms_voltage|tension/i),
+      max_power_entity: find(/smaxsn$|smaxn$|pmax$/i),
+      lqi_entity: Object.keys(hass?.states || {}).find((id) => /(linky|lixee).*(linkquality|_lqi$)/i.test(id)) || "",
+    };
     // Période en cours : le capteur dont l'état ressemble à « HP BLEU », « HCJB »… (Zigbee2MQTT nomme parfois
     // current_tarif le nom de l'option, TEMPO, et current_price la période en cours)
     const periods = all.filter((id) => /ltarf|ptec|tarif|price|periode/i.test(id));
@@ -1396,7 +1429,8 @@ class ZlinkyCard extends LinkyLook {
 
   _signature() {
     const c = this._config;
-    const ids = [...this._parts().map((p) => p.id), c.power_entity, c.tariff_entity, c.tempo_today, c.tempo_tomorrow, c.ecowatt];
+    const ids = [...this._parts().map((p) => p.id), c.power_entity, c.tariff_entity, c.current_entity, c.voltage_entity,
+      c.max_power_entity, c.lqi_entity, c.tempo_today, c.tempo_tomorrow, c.ecowatt];
     return `${c.theme}|${this._hass?.themes?.darkMode}|${this._loadedAt}|` + ids.map((id) => this._state(id)?.last_updated || "-").join("|");
   }
 
@@ -1586,9 +1620,10 @@ class ZlinkyCard extends LinkyLook {
     });
     const shown = all.slice(0, Math.max(1, Math.min(c.days, all.length)));
     if (this._selected >= shown.length) this._selected = 0;
-    this.shadowRoot.innerHTML = `${STYLE}<ha-card class="${mode}"${hcHpStyle(c)}>
+    this.shadowRoot.innerHTML = `${STYLE}${ZL_STYLE}<ha-card class="${mode}"${hcHpStyle(c)}>
       ${this._header(null)}
       ${this._zlHero(all[0], all[1])}
+      ${c.show_meter !== false ? this._meter(prices) : ""}
       ${this._tiles(a, all.filter((d) => !d.today))}
       ${this._chart(shown)}
       ${this._selected > 0 ? this._detail(shown[this._selected]) : ""}
@@ -1624,6 +1659,45 @@ class ZlinkyCard extends LinkyLook {
         ? `<div class="split${TEMPO[day.tempo] ? ` tb-${day.tempo}` : ""}"><div class="bar"><i class="hc" style="width:${hcPct}%"></i><i class="hp" style="width:${100 - hcPct}%"></i></div>
            <div class="split-l"><span class="k-hc">Heures creuses ${fmt(day.hc, 2)} kWh</span><span class="k-hp">Heures pleines ${fmt(day.hp, 2)} kWh</span></div></div>`
         : ""}
+    </section>`;
+  }
+
+  /** Compteur en direct, comme l'ancien tableau de bord : puissance, courant, tension, pic du jour, tarif en cours
+   *  et son prix, index (un par couleur et HC/HP en Tempo), total et part des heures creuses, qualité du lien. */
+  _meter(prices) {
+    const c = this._config;
+    const num = (id) => { const v = Number(this._state(id)?.state); return Number.isFinite(v) ? v : null; };
+    const unit = (id, d) => this._state(id)?.attributes?.unit_of_measurement || d;
+    const chip = (label, value, cls = "", title = "") =>
+      `<div class="zl-chip ${cls}"${title ? ` title="${esc(title)}"` : ""}><span>${esc(label)}</span><b>${value}</b></div>`;
+    const live = [];
+    const pw = this._state(c.power_entity);
+    if (pw) live.push(chip("Puissance", `${fmt(num(c.power_entity), 0)} ${esc(unit(c.power_entity, "VA"))}`));
+    if (this._state(c.current_entity)) live.push(chip("Courant", `${fmt(num(c.current_entity), 0)} ${esc(unit(c.current_entity, "A"))}`));
+    if (this._state(c.voltage_entity)) live.push(chip("Tension", `${fmt(num(c.voltage_entity), 0)} ${esc(unit(c.voltage_entity, "V"))}`));
+    if (this._state(c.max_power_entity)) live.push(chip("Pic du jour", `${fmt(num(c.max_power_entity), 0)} ${esc(unit(c.max_power_entity, "VA"))}`));
+    // tarif en cours et son prix (index de la période en cours)
+    const period = this._state(c.tariff_entity)?.state;
+    if (period && !["unknown", "unavailable"].includes(period)) {
+      const color = zlColor(period);
+      const kind = /^\s*hc|heures?\s*creuses|\bhc\b/i.test(period) ? "hc" : /^\s*hp|heures?\s*pleines|\bhp\b/i.test(period) ? "hp" : null;
+      const part = this._stats.parts.find((p) => p.kind === kind && (p.color === color || !p.color));
+      const price = part && prices ? prices[part.key] : null;
+      live.push(chip("Tarif", `${esc(period)}${price !== null && price !== undefined ? ` · ${fmt(price, 4)} €` : ""}`, kind ? `k-${kind}` : ""));
+    }
+    // index en kWh
+    const idx = this._stats.parts.map((p) => ({ p, v: ZL.kwh(this._state(p.id)) })).filter((x) => x.v !== null);
+    const name = (p) => (p.kind === "base" ? "Index" : `Index ${p.kind.toUpperCase()}${p.color ? ` ${TEMPO[p.color].label.toLowerCase()}` : ""}`);
+    const index = idx.map(({ p, v }) => chip(name(p), `${fmt(v, 0)} kWh`, `k-${p.kind}${p.color ? ` tb-${p.color}` : ""}`, p.id));
+    const total = idx.reduce((t, x) => t + x.v, 0);
+    const hc = idx.filter((x) => x.p.kind === "hc").reduce((t, x) => t + x.v, 0);
+    if (idx.length > 1) index.push(chip("Total", `${fmt(total, 0)} kWh`));
+    if (idx.some((x) => x.p.kind === "hc") && total > 0) index.push(chip("Part HC (index)", `${fmt((hc / total) * 100, 1)} %`, "k-hc"));
+    if (this._state(c.lqi_entity)) live.push(chip("Zigbee", `${fmt(num(c.lqi_entity), 0)} LQI`));
+    if (!live.length && !index.length) return "";
+    return `<section class="zl-meter">
+      ${live.length ? `<div class="zl-row">${live.join("")}</div>` : ""}
+      ${index.length ? `<div class="zl-row">${index.join("")}</div>` : ""}
     </section>`;
   }
 
@@ -1675,9 +1749,14 @@ const ZL_SCHEMA = [
   ...ZL_TEMPO_PARTS.map((p) => ({ name: p.conf, selector: { entity: { domain: "sensor" } } })),
   { name: "power_entity", selector: { entity: { domain: "sensor" } } },
   { name: "tariff_entity", selector: { entity: { domain: "sensor" } } },
+  { name: "current_entity", selector: { entity: { domain: "sensor" } } },
+  { name: "voltage_entity", selector: { entity: { domain: "sensor" } } },
+  { name: "max_power_entity", selector: { entity: { domain: "sensor" } } },
+  { name: "lqi_entity", selector: { entity: { domain: "sensor" } } },
   { name: "title", selector: { text: {} } },
   SCHEMA.find((s) => s.name === "days"),
   { name: "subscribed_power", selector: { number: { min: 3, max: 36, step: 3, mode: "box", unit_of_measurement: "kVA" } } },
+  { name: "show_meter", selector: { boolean: {} } },
   { name: "show_cost", selector: { boolean: {} } },
   { name: "energy_prices", selector: { boolean: {} } },
   { name: "subscription_price", selector: { number: { min: 0, max: 200, step: 0.01, mode: "box", unit_of_measurement: "€/mois" } } },
@@ -1704,6 +1783,11 @@ const ZL_LABELS = {
   base_entity: "Index Base du ZLinky (seulement sans heures creuses / pleines)",
   power_entity: "Puissance apparente du ZLinky (VA, facultatif : pic par jour et puissance actuelle)",
   tariff_entity: "Période tarifaire en cours du ZLinky (LTARF ou PTEC, facultatif : « HP BLEU »…)",
+  current_entity: "Courant du ZLinky (IRMS1, facultatif)",
+  voltage_entity: "Tension du ZLinky (URMS1, facultatif)",
+  max_power_entity: "Puissance maximale du jour (SMAXSN, facultatif)",
+  lqi_entity: "Qualité du lien Zigbee (linkquality, facultatif)",
+  show_meter: "Afficher le compteur en direct (puissance, courant, tarif et prix, index, part HC)",
   hc_blue_entity: "Tempo : index HC jour bleu",
   hp_blue_entity: "Tempo : index HP jour bleu",
   hc_white_entity: "Tempo : index HC jour blanc",
