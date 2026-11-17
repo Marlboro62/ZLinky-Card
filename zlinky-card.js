@@ -15,7 +15,7 @@
  * © 2026 Marlboro62.
  */
 (() => {
-const CARD_VERSION = "0.1.0-beta.2";
+const CARD_VERSION = "0.1.0-beta.3";
 
 /* ---------------------------------------------------------------- données */
 
@@ -1235,11 +1235,13 @@ const ZL_DEFAULTS = {
   theme: "v2",
   show_pdl: false,
   show_tempo: false,
-  tempo_today: "sensor.rte_tempo_today",
-  tempo_tomorrow: "sensor.rte_tempo_tomorrow",
-  tempo_info: "sensor.edf_tempo_info",
+  // Capteurs RTE facultatifs : vides par défaut (l'éditeur ne signale pas d'entité inconnue) ; les noms connus
+  // sont repris s'ils existent (withAliases)
+  tempo_today: "",
+  tempo_tomorrow: "",
+  tempo_info: "",
   price_prefix: "sensor.edf_tempo_price_",
-  ecowatt: "sensor.rte_ecowatt_j0",
+  ecowatt: "",
   show_ecowatt: true,
   show_week: false,
   show_power: true,
@@ -1261,8 +1263,17 @@ class ZlinkyCard extends LinkyLook {
     const ids = zlEnergyIds(hass).filter((id) => /linky|lixee|teleinfo|tic/i.test(id));
     const pick = (re) => ids.find((id) => re.test(id)) || "";
     const tier = (n) => pick(new RegExp(`(tier_?${n}_summation|summation_delivered_tier_?${n}|tier_?${n}$)`, "i"));
-    const out = { power_entity: Object.keys(hass?.states || {}).find((id) => /(linky|lixee).*(apparent_power|papp|puissance_apparente)/i.test(id)) || "" };
-    const z2m = { hc_blue: /bbrhcjb/i, hp_blue: /bbrhpjb/i, hc_white: /bbrhcjw/i, hp_white: /bbrhpjw/i, hc_red: /bbrhcjr/i, hp_red: /bbrhpjr/i };
+    const all = Object.keys(hass?.states || {}).filter((id) => /linky|lixee|teleinfo|tic/i.test(id));
+    const find = (re) => all.find((id) => re.test(id)) || "";
+    // puissance apparente (ZHA apparent_power, Zigbee2MQTT SINSTS en mode standard, PAPP en mode historique)
+    // et période en cours (LTARF en mode standard, PTEC en mode historique)
+    const out = { power_entity: find(/apparent_power|sinsts|papp|puissance_apparente/i), tariff_entity: find(/ltarf|ptec|tarif_en_cours|current_tarif/i) };
+    // Zigbee2MQTT : mode historique (BBRHCJB…) ou mode standard (index nommés « HC BLEU »…)
+    const z2m = {
+      hc_blue: /bbrhcjb|hc_?bleu|hcjb/i, hp_blue: /bbrhpjb|hp_?bleu|hpjb/i,
+      hc_white: /bbrhcjw|hc_?blanc|hcjw/i, hp_white: /bbrhpjw|hp_?blanc|hpjw/i,
+      hc_red: /bbrhcjr|hc_?rouge|hcjr/i, hp_red: /bbrhpjr|hp_?rouge|hpjr/i,
+    };
     if (tier(6) || pick(z2m.hp_red)) {
       ZL_TEMPO_PARTS.forEach((p, i) => { out[p.conf] = tier(i + 1) || pick(z2m[p.key]); });
       return out;
@@ -1677,7 +1688,7 @@ const ZL_LABELS = {
   hp_entity: "Index heures pleines du ZLinky (kWh ou Wh)",
   base_entity: "Index Base du ZLinky (seulement sans heures creuses / pleines)",
   power_entity: "Puissance apparente du ZLinky (VA, facultatif : pic par jour et puissance actuelle)",
-  tariff_entity: "Période tarifaire en cours du ZLinky (PTEC, facultatif)",
+  tariff_entity: "Période tarifaire en cours du ZLinky (LTARF ou PTEC, facultatif : « HP BLEU »…)",
   hc_blue_entity: "Tempo : index HC jour bleu",
   hp_blue_entity: "Tempo : index HP jour bleu",
   hc_white_entity: "Tempo : index HC jour blanc",
