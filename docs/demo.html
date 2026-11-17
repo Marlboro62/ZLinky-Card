@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Carte ZLinky, démo</title>
+<style>
+  body { margin: 0; padding: 24px 16px; background: #111827; font-family: Roboto, "Segoe UI", system-ui, sans-serif; color: #e5e7eb; }
+  body.light { background: #eef1f5; color: #1f2937; }
+  h1 { font-size: 1.2rem; margin: 0 0 4px; } p { margin: 0 0 18px; font-size: .9rem; opacity: .8; }
+  .grid { display: grid; grid-template-columns: minmax(300px, 520px); gap: 20px; }
+  .bar { display: flex; gap: 8px; margin-bottom: 18px; flex-wrap: wrap; }
+  button { padding: 6px 12px; border-radius: 8px; border: 1px solid #4b5563; background: transparent; color: inherit; cursor: pointer; font: inherit; }
+  button.on { background: #1d93e3; border-color: #1d93e3; color: #fff; }
+</style>
+</head>
+<body>
+<h1>Carte ZLinky</h1>
+<p>Démo avec des données fictives : la vraie carte, sans Home Assistant ni ZLinky.</p>
+<div class="bar">
+  <button data-s="tempo" class="on">Tempo (6 index)</button>
+  <button data-s="hchp">Heures creuses / pleines</button>
+  <button data-s="base">Base</button>
+  <button data-s="message">Message du compteur</button>
+  <button data-s="theme">Clair / sombre</button>
+</div>
+<div class="grid" id="grid"></div>
+<script src="../zlinky-card.js"></script>
+<script>
+  // Données fictives : statistiques de Home Assistant (jour et heure) fabriquées pour la démo
+  const DAY = 86400000, H = 3600000, now = new Date();
+  const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const tempoColor = (t) => { const n = Math.floor((t + 6 * H) / DAY) % 11; return n === 4 ? "red" : n === 2 || n === 8 ? "white" : "blue"; };
+  const isHc = (t) => { const h = new Date(t).getHours(); return h < 6 || h >= 22; };
+  // Profil horaire d'un foyer : nuit, matin, soir
+  // plus en hiver, variable d'un jour à l'autre, un peu plus l'an dernier (comparaisons parlantes)
+  const factor = (t) => {
+    const d = new Date(t), doy = Math.floor((t - new Date(d.getFullYear(), 0, 1).getTime()) / DAY), day = Math.floor(t / DAY);
+    return (1 + 0.35 * Math.cos((2 * Math.PI * (doy - 15)) / 365)) * (1 + 0.18 * Math.sin(day * 1.7) + 0.08 * Math.cos(day * 0.9)) * (d.getFullYear() < now.getFullYear() ? 1.07 : 1);
+  };
+  const profile = (t) => { const h = new Date(t).getHours(); return [0.9, 0.7, 0.55, 0.5, 0.5, 0.45, 0.6, 0.85, 0.7, 0.45, 0.4, 0.45, 0.6, 0.5, 0.4, 0.4, 0.45, 0.6, 0.9, 1.0, 0.85, 0.7, 1.2, 1.0][h] * factor(t); };
+  let scen = "tempo", dark = true, message = false;
+  const parts = () => scen === "tempo"
+    ? ["blue", "white", "red"].flatMap((c) => ["hc", "hp"].map((k) => ({ id: `sensor.demo_${k}_${c}`, k, c })))
+    : scen === "hchp" ? [{ id: "sensor.demo_hc", k: "hc" }, { id: "sensor.demo_hp", k: "hp" }] : [{ id: "sensor.demo_base", k: "base" }];
+  const share = (p, t) => (p.c && p.c !== tempoColor(t) ? 0 : p.k === "base" ? 1 : (p.k === "hc") === isHc(t) ? 1 : 0);
+  const stats = (from, to, period, types) => {
+    const out = {};
+    for (const p of parts()) {
+      out[p.id] = [];
+      let st = 1000;
+      const step = period === "day" ? DAY : H;
+      for (let t = from; t + step <= to; t += step) {
+        let c = 0;
+        if (period === "day") for (let h = 0; h < 24; h++) c += profile(t + h * H) * share(p, t + h * H);
+        else c = profile(t) * share(p, t);
+        st += c;
+        out[p.id].push({ start: t, end: t + step, change: c, state: st, max: 1800 + (t / DAY % 9) * 260 });
+      }
+      out[p.id].last = st;
+    }
+    return out;
+  };
+  const build = () => {
+    const st = (s, a = {}) => ({ state: String(s), attributes: a, last_updated: String(Math.random()) });
+    const hourly = stats(midnight - DAY, now.getTime() - 10 * 60000, "hour");
+    const states = {
+      "sensor.demo_power": st(1240, { unit_of_measurement: "VA" }),
+      "sensor.demo_current": st(5, { unit_of_measurement: "A" }),
+      "sensor.demo_voltage": st(231, { unit_of_measurement: "V" }),
+      "sensor.demo_max": st(3460, { unit_of_measurement: "VA" }),
+      "sensor.demo_ccasn": st(1180, { unit_of_measurement: "W" }),
+      "sensor.demo_ccasn_1": st(960, { unit_of_measurement: "W" }),
+      "sensor.demo_lqi": st(160, { unit_of_measurement: "lqi" }),
+      "sensor.demo_msg1": st(message ? "COUPURE PREVUE LE 25/11 DE 9H A 12H" : "PAS DE MESSAGE"),
+      "sensor.demo_msg2": st(message ? "ENEDIS" : ""),
+      "sensor.demo_tarif": st(scen === "tempo" ? `${isHc(now.getTime()) ? "HC" : "HP"} ${{ blue: "BLEU", white: "BLANC", red: "ROUGE" }[tempoColor(now.getTime())]}` : isHc(now.getTime()) ? "HC" : "HP"),
+      "sensor.rte_ecowatt_j0": st(1),
+    };
+    const prices = { blue: { hc: 0.1325, hp: 0.1612 }, white: { hc: 0.1499, hp: 0.1871 }, red: { hc: 0.1575, hp: 0.706 } };
+    for (const c of ["blue", "white", "red"]) for (const k of ["hc", "hp"]) states[`sensor.edf_tempo_price_${c}_${k}`] = st(prices[c][k]);
+    // l'index de la période en cours avance depuis la dernière heure enregistrée, les autres sont arrêtés
+    for (const p of parts()) states[p.id] = st(hourly[p.id].last + (share(p, now.getTime()) ? 0.12 : 0), { unit_of_measurement: "kWh" });
+    if (scen === "tempo") {
+      states["sensor.rte_tempo_today"] = st(tempoColor(now.getTime()));
+      states["sensor.rte_tempo_tomorrow"] = st(tempoColor(now.getTime() + DAY));
+    }
+    const flow = scen === "hchp" ? [{ stat_energy_from: "sensor.demo_hc", number_energy_price: 0.1696 }, { stat_energy_from: "sensor.demo_hp", number_energy_price: 0.2146 }]
+      : scen === "base" ? [{ stat_energy_from: "sensor.demo_base", number_energy_price: 0.1952 }] : [];
+    return {
+      states, themes: { darkMode: dark }, locale: { language: "fr" },
+      callWS: async (m) => {
+        if (m.type === "energy/get_prefs") return { energy_sources: [{ type: "grid", flow_from: flow }] };
+        const from = Date.parse(m.start_time), to = Date.parse(m.end_time);
+        if (m.types.includes("max")) { const d = stats(from, to, "day"); return { [m.statistic_ids[0]]: Object.values(d)[0] }; }
+        if (m.period === "day") return stats(from, to, "day");
+        return from >= midnight - DAY ? hourly : stats(from, to, "hour");
+      },
+    };
+  };
+  const config = () => {
+    const base = { title: "Linky", power_entity: "sensor.demo_power", current_entity: "sensor.demo_current", voltage_entity: "sensor.demo_voltage",
+      max_power_entity: "sensor.demo_max", ccasn_entity: "sensor.demo_ccasn", ccasn_prev_entity: "sensor.demo_ccasn_1", lqi_entity: "sensor.demo_lqi",
+      tariff_entity: "sensor.demo_tarif", message_entity: "sensor.demo_msg1", message2_entity: "sensor.demo_msg2",
+      subscribed_power: 9, subscription_price: 18.36, show_week: true, theme: "auto" };
+    if (scen === "tempo") return { ...base, ...Object.fromEntries(parts().map((p) => [`${p.k}_${p.c}_entity`, p.id])) };
+    if (scen === "hchp") return { ...base, hc_entity: "sensor.demo_hc", hp_entity: "sensor.demo_hp" };
+    return { ...base, base_entity: "sensor.demo_base" };
+  };
+  const grid = document.getElementById("grid");
+  const draw = () => {
+    try { localStorage.removeItem("zlinky-card:message-ferme"); } catch (e) { /* stockage indisponible */ }
+    grid.innerHTML = "";
+    const card = document.createElement("zlinky-card");
+    card.setConfig(config());
+    grid.appendChild(card);
+    card.hass = build();
+  };
+  document.querySelector(".bar").addEventListener("click", (ev) => {
+    const b = ev.target.closest("[data-s]");
+    if (!b) return;
+    const s = b.dataset.s;
+    if (s === "theme") { dark = !dark; document.body.classList.toggle("light", !dark); }
+    else if (s === "message") { message = !message; b.classList.toggle("on", message); }
+    else { scen = s; document.querySelectorAll("[data-s=tempo],[data-s=hchp],[data-s=base]").forEach((x) => x.classList.toggle("on", x === b)); }
+    draw();
+  });
+  draw();
+</script>
+</body>
+</html>
