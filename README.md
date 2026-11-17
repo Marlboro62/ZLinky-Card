@@ -51,28 +51,55 @@ Même présentation que la [Carte Enedis Linky New](https://github.com/Marlboro6
 
 ## Configuration
 
+Le plus simple est l'**éditeur visuel** : à l'ajout de la carte, il repère les index du ZLinky (ZHA ou Zigbee2MQTT). Si un index est introuvable, la carte affiche ceux qu'elle a trouvés dans Home Assistant.
+
+Les noms ci-dessous sont des **exemples** : remplacez-les par ceux de vos capteurs (**Outils de développement › États**, cherchez `linky` ou `lixee`).
+
+Contrat **heures creuses / heures pleines** :
+
 ```yaml
 type: custom:zlinky-card
-hc_entity: sensor.zlinky_index_hc        # index heures creuses
-hp_entity: sensor.zlinky_index_hp        # index heures pleines
-power_entity: sensor.zlinky_puissance    # puissance apparente (facultatif)
-subscribed_power: 6                      # kVA souscrits (facultatif)
-subscription_price: 18.36                # abonnement mensuel TTC (facultatif)
+hc_entity: sensor.mon_zlinky_tier_1_summation_delivered   # index heures creuses
+hp_entity: sensor.mon_zlinky_tier_2_summation_delivered   # index heures pleines
+power_entity: sensor.mon_zlinky_apparent_power            # puissance apparente (facultatif)
+subscribed_power: 6                                       # kVA souscrits (facultatif)
+subscription_price: 18.36                                 # abonnement mensuel TTC (facultatif)
 ```
+
+Contrat **Tempo** : les 6 index du ZLinky (avec ZHA, `tier_1` à `tier_6` dans cet ordre ; avec Zigbee2MQTT, `BBRHCJB` à `BBRHPJR`) :
+
+```yaml
+type: custom:zlinky-card
+hc_blue_entity: sensor.mon_zlinky_tier_1_summation_delivered    # HC jour bleu
+hp_blue_entity: sensor.mon_zlinky_tier_2_summation_delivered    # HP jour bleu
+hc_white_entity: sensor.mon_zlinky_tier_3_summation_delivered   # HC jour blanc
+hp_white_entity: sensor.mon_zlinky_tier_4_summation_delivered   # HP jour blanc
+hc_red_entity: sensor.mon_zlinky_tier_5_summation_delivered     # HC jour rouge
+hp_red_entity: sensor.mon_zlinky_tier_6_summation_delivered     # HP jour rouge
+tariff_entity: sensor.mon_zlinky_ptec                           # période en cours (facultatif)
+tempo_tomorrow: sensor.mon_zlinky_demain                        # couleur de demain (facultatif)
+```
+
+Contrat **Base** : `base_entity: sensor.mon_zlinky_summation_delivered`.
+
+En Tempo, chaque jour prend la couleur de ses index : pastilles du graphique, détail du jour, couleur des barres si vous la réglez. La pastille « Aujourd'hui » suit la période en cours du ZLinky (`HPJB`, `HCJR`…) quand aucun capteur RTE n'est choisi ; « Demain » accepte aussi la couleur écrite par le ZLinky (`BLEU`, `BLAN`, `ROUG`).
 
 | Option | Rôle | Par défaut |
 | --- | --- | --- |
 | `hc_entity`, `hp_entity` | Index heures creuses et heures pleines (Wh ou kWh) | — |
 | `base_entity` | Index Base, à la place des deux précédents pour un contrat Base | — |
+| `hc_blue_entity` … `hp_red_entity` | Les 6 index Tempo (HC et HP des jours bleus, blancs et rouges) | — |
+| `tariff_entity` | Période tarifaire en cours (PTEC) : affichée, et couleur Tempo du jour | — |
 | `power_entity` | Puissance apparente (VA) : pic par jour et puissance actuelle | — |
 | `days` | Jours affichés dans le graphique : 7, 14 ou 31 | 14 |
 | `subscribed_power` | Puissance souscrite en kVA (jauge et dépassements) | — |
 | `show_cost` | Afficher les coûts | `true` |
 | `energy_prices` | Prendre les prix réglés dans le **tableau Énergie** | `true` |
 | `hc_price`, `hp_price`, `base_price` | Prix du kWh TTC saisis dans la carte : ils **passent avant** ceux du tableau Énergie | — |
+| `price_prefix` | Tempo sans prix dans le tableau Énergie : capteurs de prix Tempo (`<préfixe>blue_hc` …) | `sensor.edf_tempo_price_` |
 | `subscription_price` | Abonnement mensuel TTC, ajouté au coût au prorata des jours | — |
 | `show_week`, `tiles_horizontal` | Cases de la semaine en cours et de la semaine dernière ; disposition en 3 colonnes | `false` |
-| `show_power`, `show_ecowatt`, `show_tempo` | Puissance maximale, EcoWatt, Tempo (capteurs RTE) | `true`, `true`, `false` |
+| `show_power`, `show_ecowatt`, `show_tempo` | Puissance maximale, EcoWatt, Tempo (activé tout seul avec les index Tempo) | `true`, `true`, `false` |
 | `theme` | `v2` (bleu nuit), `auto` (clair si Home Assistant est en clair), `ha` (thème de Home Assistant) | `v2` |
 | `font_size` | Taille du texte en % | 100 |
 
