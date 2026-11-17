@@ -44,6 +44,7 @@ Même présentation que la [Carte Enedis Linky New](https://github.com/Marlboro6
 - **Graphique** des 7, 14 ou 31 derniers jours.
 - **Puissance maximale** par jour (avec la puissance apparente du ZLinky).
 - **EcoWatt** et **Tempo** (capteurs RTE), facultatifs.
+- **Messages du compteur** : quand le fournisseur ou le distributeur envoie un message au Linky (MSG1, MSG2), il s'affiche en fenêtre sur la carte. Le bouton × la ferme ; elle ne revient que si le message change. « PAS DE MESSAGE » est ignoré. L'interrupteur **Tester la fenêtre de message** de l'éditeur affiche un exemple.
 
 ## Installation
 
@@ -100,6 +101,9 @@ En Tempo, chaque jour prend la couleur de ses index : pastilles du graphique, d�
 | `ccasn_entity`, `show_ccasn` | Puissance active moyenne de la demi-heure (CCASN), et son interrupteur | —, `true` |
 | `ccasn_prev_entity`, `show_ccasn_prev` | Puissance active de la demi-heure précédente (CCASN-1), et son interrupteur | —, `true` |
 | `show_meter` | Bloc « compteur en direct » | `true` |
+| `message_entity`, `message2_entity` | Messages du compteur (MSG1, MSG2) | — |
+| `show_messages` | Afficher les messages en fenêtre | `true` |
+| `message_test` | Afficher un message d'essai (à couper après l'essai) | `false` |
 | `power_entity` | Puissance apparente (VA) : pic par jour et puissance actuelle | — |
 | `days` | Jours affichés dans le graphique : 7, 14 ou 31 | 14 |
 | `subscribed_power` | Puissance souscrite en kVA (jauge et dépassements) | — |
