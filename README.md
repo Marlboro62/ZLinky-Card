@@ -62,9 +62,13 @@ Même présentation que la [Carte Enedis Linky New](https://github.com/Marlboro6
 
 ## Installation
 
-1. **Paramètres › Marketplace** (ou HACS avant la 2026.11) › menu ⋮ › **Dépôts personnalisés** : ajoutez `https://github.com/Marlboro62/ZLinky-Card`, catégorie **Tableau de bord** (Lovelace).
-2. Installez **Carte ZLinky**, puis rechargez la page (**Ctrl+F5**).
+[![Ouvrir dans Home Assistant](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=Marlboro62&repository=ZLinky-Card&category=plugin)
+
+1. Ouvrez **Paramètres › Marketplace** (ou HACS avant la 2026.11), ou utilisez le bouton ci-dessus.
+2. Cherchez **Carte ZLinky**, installez-la, puis rechargez la page (**Ctrl+F5**).
 3. Ajoutez la carte **Carte ZLinky** à un tableau de bord : l'éditeur propose les index du ZLinky qu'il trouve.
+
+Si la carte n'apparaît pas dans la recherche, ajoutez-la comme dépôt personnalisé : menu ⋮ › **Dépôts personnalisés**, adresse `https://github.com/Marlboro62/ZLinky-Card`, catégorie **Tableau de bord** (Lovelace), puis reprenez l'étape 2.
 
 ## Configuration
 
