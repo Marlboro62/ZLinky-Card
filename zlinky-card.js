@@ -15,7 +15,7 @@
  * © 2026 Marlboro62.
  */
 (() => {
-const CARD_VERSION = "0.1.0-beta.6";
+const CARD_VERSION = "0.1.0-beta.7";
 
 /* ---------------------------------------------------------------- données */
 
@@ -1462,6 +1462,8 @@ class ZlinkyCard extends LinkyLook {
     t.today = true;
     let sameTime = 0;
     const dayAgo = now.getTime() - ZL.DAY;
+    // Index qui tourne en ce moment : écart depuis la dernière heure enregistrée, sinon consommation de cette heure-là
+    let active = null, activeRate = 0;
     for (const part of s.parts) {
       let sum = 0, last = null;
       for (const row of s.hourly[part.id] || []) {
@@ -1471,10 +1473,14 @@ class ZlinkyCard extends LinkyLook {
         last = row;
       }
       const cur = ZL.kwh(this._state(part.id));
-      if (cur !== null && last && Number.isFinite(last.state) && ZL.start(last).getTime() + 3600000 >= today.getTime()) sum += Math.max(0, cur - last.state);
+      const delta = cur !== null && last && Number.isFinite(last.state) ? Math.max(0, cur - last.state) : 0;
+      if (delta && ZL.start(last).getTime() + 3600000 >= today.getTime()) sum += delta;
+      const rate = delta || (last && Number.isFinite(last.change) ? last.change : 0);
+      if (rate > activeRate) { activeRate = rate; active = part; }
       if (sum > 0 || part.kind !== "base" || !s.parts.some((p) => p.color)) add(t, part, sum);
     }
     this._yesterdaySameTime = sameTime;
+    this._activePart = s.parts.length > 1 ? active : null;
     // Pic de puissance apparente par jour
     const unit = this._state(this._config.power_entity)?.attributes?.unit_of_measurement;
     const subPower = MED.num(this._config.subscribed_power);
@@ -1497,7 +1503,7 @@ class ZlinkyCard extends LinkyLook {
       }
     });
     // Aujourd'hui : la période en cours du ZLinky (HPJB…) fait foi, le jour Tempo commençant à 6 h
-    t.tempo = zlColor(this._state(this._config.tariff_entity)?.state) || t.tempo;
+    t.tempo = this._activePart?.color || zlColor(this._state(this._config.tariff_entity)?.state) || t.tempo;
     return all;
   }
 
@@ -1677,13 +1683,11 @@ class ZlinkyCard extends LinkyLook {
     if (this._state(c.voltage_entity)) live.push(chip("Tension", `${fmt(num(c.voltage_entity), 0)} ${esc(unit(c.voltage_entity, "V"))}`));
     if (this._state(c.max_power_entity)) live.push(chip("Pic du jour", `${fmt(num(c.max_power_entity), 0)} ${esc(unit(c.max_power_entity, "VA"))}`));
     // tarif en cours et son prix (index de la période en cours)
-    const period = this._state(c.tariff_entity)?.state;
-    if (period && !["unknown", "unavailable"].includes(period)) {
-      const color = zlColor(period);
-      const kind = /^\s*hc|heures?\s*creuses|\bhc\b/i.test(period) ? "hc" : /^\s*hp|heures?\s*pleines|\bhp\b/i.test(period) ? "hp" : null;
-      const part = this._stats.parts.find((p) => p.kind === kind && (p.color === color || !p.color));
-      const price = part && prices ? prices[part.key] : null;
-      live.push(chip("Tarif", `${esc(period)}${price !== null && price !== undefined ? ` · ${fmt(price, 4)} €` : ""}`, kind ? `k-${kind}` : ""));
+    const period = this._period();
+    if (period) {
+      const price = period.part && prices ? prices[period.part.key] : null;
+      live.push(chip("Tarif", `${esc(period.label)}${price !== null && price !== undefined ? ` · ${fmt(price, 4)} €` : ""}`,
+        period.kind ? `k-${period.kind}` : "", period.note));
     }
     // index en kWh
     const idx = this._stats.parts.map((p) => ({ p, v: ZL.kwh(this._state(p.id)) })).filter((x) => x.v !== null);
@@ -1701,11 +1705,26 @@ class ZlinkyCard extends LinkyLook {
     </section>`;
   }
 
-  /** Période tarifaire en cours (PTEC du ZLinky : HP JB, HC JR…), facultative. */
+  /** Période en cours : l'index qui tourne fait foi (LTARF peut rester figé côté Zigbee) ; sinon LTARF / PTEC. */
+  _period() {
+    const raw = this._state(this._config.tariff_entity)?.state;
+    const text = raw && !["unknown", "unavailable", ""].includes(String(raw)) ? String(raw) : null;
+    const kindOf = (v) => (/^\s*hc|heures?\s*creuses|\bhc\b/i.test(v) ? "hc" : /^\s*hp|heures?\s*pleines|\bhp\b/i.test(v) ? "hp" : null);
+    const a = this._activePart;
+    if (a && a.kind !== "base") {
+      const label = `${a.kind.toUpperCase()}${a.color ? ` ${TEMPO[a.color].label.toUpperCase()}` : ""}`;
+      const same = text && kindOf(text) === a.kind && (!a.color || zlColor(text) === a.color);
+      return { label: same ? text : label, kind: a.kind, part: a, note: text && !same ? `d'après les index (le ZLinky indique ${text})` : "" };
+    }
+    if (!text) return null;
+    const kind = kindOf(text), color = zlColor(text);
+    return { label: text, kind, part: this._stats.parts.find((p) => p.kind === kind && (p.color === color || !p.color)), note: "" };
+  }
+
+  /** Période tarifaire en cours, affichée sous la puissance. */
   _tariff() {
-    const st = this._state(this._config.tariff_entity);
-    if (!st || ["unknown", "unavailable", ""].includes(String(st.state))) return "";
-    return `<div class="hero-p">Période : ${esc(st.state)}</div>`;
+    const p = this._period();
+    return p ? `<div class="hero-p"${p.note ? ` title="${esc(p.note)}"` : ""}>Période : ${esc(p.label)}</div>` : "";
   }
 
   /** Pastilles Tempo : accepte aussi les couleurs écrites par le ZLinky (BLEU, BLAN, ROUG). */
