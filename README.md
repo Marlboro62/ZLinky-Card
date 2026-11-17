@@ -41,6 +41,7 @@ Même présentation que la [Carte Enedis Linky New](https://github.com/Marlboro6
 - **Semaine, mois et année** jusqu'à hier, avec la projection du mois en cours.
 - **Comparaison avec l'an dernier** seulement si les statistiques couvrent presque toute la période (au moins 90 % des jours) : pas de « 0 kWh » ni de pourcentage trompeur sur une installation récente.
 - **Jours précédents** : les flèches ‹ › de l'encadré du haut (ou un clic sur une barre du graphique) affichent un autre jour, avec sa consommation **heure par heure** ; « Aujourd'hui » revient au jour en cours.
+- **Détail du jour**, comme le tableau Énergie : énergie et coût de chaque index (en Tempo, ceux qui ont tourné ce jour-là), abonnement, total.
 - **Graphique** des 7, 14 ou 31 derniers jours.
 - **Puissance maximale** par jour (avec la puissance apparente du ZLinky).
 - **EcoWatt** et **Tempo** (capteurs RTE), facultatifs.
@@ -101,6 +102,7 @@ En Tempo, chaque jour prend la couleur de ses index : pastilles du graphique, d�
 | `ccasn_entity`, `show_ccasn` | Puissance active moyenne de la demi-heure (CCASN), et son interrupteur | —, `true` |
 | `ccasn_prev_entity`, `show_ccasn_prev` | Puissance active de la demi-heure précédente (CCASN-1), et son interrupteur | —, `true` |
 | `show_meter` | Bloc « compteur en direct » | `true` |
+| `show_details` | Détail du jour (énergie et coût par index, abonnement, total) | `true` |
 | `message_entity`, `message2_entity` | Messages du compteur (MSG1, MSG2) | — |
 | `show_messages` | Afficher les messages en fenêtre | `true` |
 | `message_test` | Afficher un message d'essai (à couper après l'essai) | `false` |

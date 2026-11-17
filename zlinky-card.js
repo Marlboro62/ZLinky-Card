@@ -15,7 +15,7 @@
  * © 2026 Marlboro62.
  */
 (() => {
-const CARD_VERSION = "0.1.0-beta.10";
+const CARD_VERSION = "0.1.0-beta.11";
 
 /* ---------------------------------------------------------------- données */
 
@@ -1240,6 +1240,7 @@ const ZL_DEFAULTS = {
   message_entity: "",
   message2_entity: "",
   show_messages: true,
+  show_details: true,
   message_test: false,
   show_meter: true,
   subscribed_power: null,
@@ -1278,6 +1279,18 @@ ha-card { position: relative; display: block; }
   color: var(--med-text); font-size: 1.3rem; line-height: 1; cursor: pointer; }
 .zl-msg-x:hover, .zl-msg-x:focus-visible { border-color: #f0a33a; outline: none; }
 .zl-meter { margin: 10px 12px 0; display: grid; gap: 6px; }
+.zl-det { margin: 10px 12px 0; border: 1px solid var(--med-line); border-radius: 12px; overflow: hidden; }
+.zl-det table { width: 100%; border-collapse: collapse; font-size: calc(.82rem * var(--fs, 1)); }
+.zl-det th, .zl-det td { padding: 8px 12px; text-align: right; border-bottom: 1px solid var(--med-line); white-space: nowrap; }
+.zl-det th:first-child, .zl-det td:first-child { text-align: left; white-space: normal; }
+.zl-det th { color: var(--med-muted); font-weight: 500; font-size: calc(.74rem * var(--fs, 1)); }
+.zl-det tfoot td { font-weight: 700; border-bottom: 0; background: var(--med-surface); }
+.zl-sw { display: inline-block; width: 22px; height: 12px; border-radius: 3px; margin-right: 10px; vertical-align: middle; }
+.zl-sw.k-hc { background: var(--med-hc); } .zl-sw.k-hp { background: var(--med-hp); } .zl-sw.k-base { background: var(--med-base, var(--med-hc)); }
+.zl-sw.k-hc.tb-blue { background: var(--med-hc-blue, var(--med-hc)); } .zl-sw.k-hp.tb-blue { background: var(--med-hp-blue, var(--med-hp)); }
+.zl-sw.k-hc.tb-white { background: var(--med-hc-white, var(--med-hc)); } .zl-sw.k-hp.tb-white { background: var(--med-hp-white, var(--med-hp)); }
+.zl-sw.k-hc.tb-red { background: var(--med-hc-red, var(--med-hc)); } .zl-sw.k-hp.tb-red { background: var(--med-hp-red, var(--med-hp)); }
+.zl-sw.zl-sub { background: #f1f5f9; box-shadow: inset 0 0 0 1px #94a3b8; }
 .zl-nav { display: flex; align-items: center; gap: 6px; flex-wrap: nowrap; min-width: 0; }
 .zl-nav .hero-l { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .zl-btn { border: 1px solid var(--med-line); background: var(--med-surface); color: var(--med-text); border-radius: 999px;
@@ -1690,6 +1703,7 @@ class ZlinkyCard extends LinkyLook {
       ${this._header(null)}
       ${this._zlHero(all[this._selected], all[this._selected + 1])}
       ${this._hoursChart(all[this._selected])}
+      ${c.show_details !== false ? this._details(all[this._selected], prices) : ""}
       ${c.show_meter !== false ? this._meter(prices) : ""}
       ${this._tiles(a, all.filter((d) => !d.today))}
       ${this._chart(shown)}
@@ -1763,6 +1777,30 @@ class ZlinkyCard extends LinkyLook {
         <button class="zl-msg-x" data-msg-close title="Fermer" aria-label="Fermer le message">×</button>
       </div>
     </div>`;
+  }
+
+  /** Détail du jour, comme le tableau Énergie : une ligne par index (énergie et coût), l'abonnement, puis le total. */
+  _details(day, prices) {
+    if (!day || !this._stats) return "";
+    const rows = [];
+    for (const part of this._stats.parts) {
+      const v = day.parts?.[part.key] || 0;
+      // en Tempo, seuls les index qui ont tourné ce jour-là ; en HC/HP et Base, toujours
+      if (!v && part.color) continue;
+      const price = prices ? prices[part.key] : null;
+      const name = part.kind === "base" ? "Base" : `${part.kind === "hc" ? "Heures creuses" : "Heures pleines"}${part.color ? ` · ${TEMPO[part.color].label}` : ""}`;
+      rows.push(`<tr><td><i class="zl-sw k-${part.kind}${part.color ? ` tb-${part.color}` : ""}"></i>${esc(name)}</td>
+        <td>${fmt(v, 2)} kWh</td><td>${price !== null && price !== undefined ? euro(v * price) : "—"}</td></tr>`);
+    }
+    if (day.sub) rows.push(`<tr><td><i class="zl-sw zl-sub"></i>Abonnement${day.today ? " (au prorata de l'heure)" : ""}</td><td>0 kWh</td><td>${euro(day.sub)}</td></tr>`);
+    if (!rows.length) return "";
+    return `<section class="zl-det">
+      <table>
+        <thead><tr><th>Source</th><th>Énergie</th><th>Coût</th></tr></thead>
+        <tbody>${rows.join("")}</tbody>
+        <tfoot><tr><td>Total</td><td>${fmt(day.total, 2)} kWh</td><td>${day.cost !== null && day.cost !== undefined ? euro(day.cost) : "—"}</td></tr></tfoot>
+      </table>
+    </section>`;
   }
 
   /** Consommation heure par heure du jour affiché : hier et aujourd'hui sont déjà lus, les autres jours à la demande. */
@@ -1948,6 +1986,7 @@ const ZL_SCHEMA = [
   SCHEMA.find((s) => s.name === "days"),
   { name: "subscribed_power", selector: { number: { min: 3, max: 36, step: 3, mode: "box", unit_of_measurement: "kVA" } } },
   { name: "show_meter", selector: { boolean: {} } },
+  { name: "show_details", selector: { boolean: {} } },
   { name: "show_cost", selector: { boolean: {} } },
   { name: "energy_prices", selector: { boolean: {} } },
   { name: "subscription_price", selector: { number: { min: 0, max: 200, step: 0.01, mode: "box", unit_of_measurement: "€/mois" } } },
@@ -1986,6 +2025,7 @@ const ZL_LABELS = {
   message2_entity: "Message 2 du compteur (MSG2, facultatif)",
   show_messages: "Afficher les messages du compteur en fenêtre (fermeture par ×, retour si le message change)",
   message_test: "Tester la fenêtre de message (à couper après l'essai)",
+  show_details: "Afficher le détail du jour (énergie et coût par index, abonnement, total)",
   show_meter: "Afficher le compteur en direct (puissance, courant, tarif et prix, index, part HC)",
   hc_blue_entity: "Tempo : index HC jour bleu",
   hp_blue_entity: "Tempo : index HP jour bleu",
