@@ -15,7 +15,7 @@
  * © 2026 Marlboro62.
  */
 (() => {
-const CARD_VERSION = "0.1.0-beta.3";
+const CARD_VERSION = "0.1.0-beta.4";
 
 /* ---------------------------------------------------------------- données */
 
@@ -1274,6 +1274,17 @@ class ZlinkyCard extends LinkyLook {
       hc_white: /bbrhcjw|hc_?blanc|hcjw/i, hp_white: /bbrhpjw|hp_?blanc|hpjw/i,
       hc_red: /bbrhcjr|hc_?rouge|hcjr/i, hp_red: /bbrhpjr|hp_?rouge|hpjr/i,
     };
+    // Zigbee2MQTT, mode standard : index fournisseur EASF01 à EASF06 (Tempo : HC bleu, HP bleu, HC blanc,
+    // HP blanc, HC rouge, HP rouge ; HC/HP : EASF01 et EASF02 seulement, les suivants restent à 0) ; Base : EAST
+    const easf = (n) => pick(new RegExp(`easf0?${n}$`, "i"));
+    if (easf(1) && easf(2)) {
+      const used = [3, 4, 5, 6].some((n) => Number(hass.states[easf(n)]?.state) > 0);
+      if (used) {
+        ZL_TEMPO_PARTS.forEach((p, i) => { out[p.conf] = easf(i + 1); });
+        return out;
+      }
+      return { ...out, hc_entity: easf(1), hp_entity: easf(2) };
+    }
     if (tier(6) || pick(z2m.hp_red)) {
       ZL_TEMPO_PARTS.forEach((p, i) => { out[p.conf] = tier(i + 1) || pick(z2m[p.key]); });
       return out;
@@ -1281,7 +1292,7 @@ class ZlinkyCard extends LinkyLook {
     const hc = tier(1) || pick(/hchc|_hc$|heures_creuses/i);
     const hp = tier(2) || pick(/hchp|_hp$|heures_pleines/i);
     if (hc && hp) return { ...out, hc_entity: hc, hp_entity: hp };
-    return { ...out, base_entity: pick(/summation_delivered|base|index/i) };
+    return { ...out, base_entity: pick(/summation_delivered|_east$|base|index/i) };
   }
 
   setConfig(config) {

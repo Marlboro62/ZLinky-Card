@@ -82,7 +82,7 @@ tempo_tomorrow: sensor.mon_zlinky_demain                        # couleur de dem
 
 Contrat **Base** : `base_entity: sensor.mon_zlinky_summation_delivered`.
 
-Avec Zigbee2MQTT en **mode standard**, les index portent le nom écrit par le compteur (`HC BLEU`, `HP ROUGE`…), la période en cours est **LTARF** (`HP BLEU`) et la puissance apparente **SINSTS** : l'éditeur les repère aussi.
+Avec Zigbee2MQTT en **mode standard**, les index portent le nom écrit par le compteur (`HC BLEU`, `HP ROUGE`…), la période en cours est **LTARF** (`HP BLEU`) et la puissance apparente **SINSTS** : l'éditeur les repère aussi. Selon la version, les index s'appellent aussi **EASF01** à **EASF06** : en Tempo, dans l'ordre HC bleu, HP bleu, HC blanc, HP blanc, HC rouge, HP rouge ; en heures creuses / pleines, EASF01 (HC) et EASF02 (HP) ; **EAST** est l'index total (Base).
 
 En Tempo, chaque jour prend la couleur de ses index : pastilles du graphique, détail du jour, couleur des barres si vous la réglez. La pastille « Aujourd'hui » suit la période en cours du ZLinky (`HPJB`, `HCJR`…) quand aucun capteur RTE n'est choisi ; « Demain » accepte aussi la couleur écrite par le ZLinky (`BLEU`, `BLAN`, `ROUG`).
 
