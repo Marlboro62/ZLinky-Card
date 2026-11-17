@@ -103,7 +103,7 @@ En Tempo, chaque jour prend la couleur de ses index : pastilles du graphique, d�
 | `ccasn_prev_entity`, `show_ccasn_prev` | Puissance active de la demi-heure précédente (CCASN-1), et son interrupteur | —, `true` |
 | `show_meter` | Bloc « compteur en direct » | `true` |
 | `show_details` | Détail du jour (énergie et coût par index, abonnement, total) | `true` |
-| `live_open`, `index_open` | Sections « En direct » et « Index du compteur » ouvertes au départ ; un clic sur leur titre les rabat (choix retenu par le navigateur) | `true` |
+| `live_open`, `index_open`, `totals_open`, `chart_open` | Sections « En direct », « Index du compteur », « Semaine, mois et année » et « Historique » ouvertes au départ ; un clic sur leur titre les rabat (choix retenu par le navigateur) | `true` |
 | `message_entity`, `message2_entity` | Messages du compteur (MSG1, MSG2) | — |
 | `show_messages` | Afficher les messages en fenêtre | `true` |
 | `message_test` | Afficher un message d'essai (à couper après l'essai) | `false` |

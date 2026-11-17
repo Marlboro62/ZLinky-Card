@@ -15,7 +15,7 @@
  * © 2026 Marlboro62.
  */
 (() => {
-const CARD_VERSION = "0.1.0-beta.12";
+const CARD_VERSION = "0.1.0-beta.13";
 
 /* ---------------------------------------------------------------- données */
 
@@ -1244,6 +1244,8 @@ const ZL_DEFAULTS = {
   // sections rabattables du compteur : ouvertes au départ, puis l'état choisi est retenu par le navigateur
   live_open: true,
   index_open: true,
+  totals_open: true,
+  chart_open: true,
   message_test: false,
   show_meter: true,
   subscribed_power: null,
@@ -1307,6 +1309,7 @@ ha-card { position: relative; display: block; }
 .zl-wait { font-size: calc(.78rem * var(--fs, 1)); color: var(--med-muted); padding: 10px 2px; }
 .zl-row { display: flex; flex-wrap: wrap; gap: 6px; }
 .zl-fold { display: grid; gap: 6px; }
+.zl-fold-w { margin: 10px 12px 0; }
 .zl-fold-h { display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 10px; border: 1px solid var(--med-line); border-radius: 10px;
   background: transparent; color: var(--med-muted); font: inherit; font-size: calc(.78rem * var(--fs, 1)); cursor: pointer; text-align: left; }
 .zl-fold-h:hover, .zl-fold-h:focus-visible { border-color: var(--med-blue); color: var(--med-text); outline: none; }
@@ -1725,8 +1728,12 @@ class ZlinkyCard extends LinkyLook {
       ${this._hoursChart(all[this._selected])}
       ${c.show_details !== false ? this._details(all[this._selected], prices) : ""}
       ${c.show_meter !== false ? this._meter(prices) : ""}
-      ${this._tiles(a, all.filter((d) => !d.today))}
-      ${this._chart(shown)}
+      ${this._fold("totals", "Semaine, mois et année",
+        [a.current_month !== null ? `${cap(new Date().toLocaleDateString("fr-FR", { month: "long" }))} ${fmt(a.current_month, 0)} kWh` : "",
+          a.current_year !== null ? `Année ${fmt(a.current_year, 0)} kWh` : ""].filter(Boolean).join(" · "),
+        this._tiles(a, all.filter((d) => !d.today)))}
+      ${this._fold("chart", "Historique",
+        `${shown.length} jours · ${fmt(shown.reduce((t, d) => t + (d.total || 0), 0), 0)} kWh`, this._chart(shown))}
       ${c.show_power !== false ? this._power(shown) : ""}
       ${this._ecowatt()}
       ${this._zlFooter(all[1])}
@@ -1940,6 +1947,16 @@ class ZlinkyCard extends LinkyLook {
     </section>`;
   }
 
+  /** Section rabattable autour d'un bloc de la carte (cases, graphique) ; rabattue, elle garde un résumé. */
+  _fold(key, title, summary, html) {
+    const open = this._isOpen(key);
+    return `<div class="zl-fold zl-fold-w${open ? " open" : ""}">
+      <button class="zl-fold-h" data-fold="${key}" aria-expanded="${open}">
+        <span class="zl-fold-c" aria-hidden="true">›</span><span>${esc(title)}</span>${open ? "" : `<em>${summary}</em>`}
+      </button>
+    </div>${open ? html : ""}`;
+  }
+
   /** Section ouverte : choix fait sur la carte (retenu par le navigateur), sinon réglage de la carte. */
   _isOpen(key) {
     if (this._folds === undefined) {
@@ -2031,6 +2048,8 @@ const ZL_SCHEMA = [
   { name: "show_details", selector: { boolean: {} } },
   { name: "live_open", selector: { boolean: {} } },
   { name: "index_open", selector: { boolean: {} } },
+  { name: "totals_open", selector: { boolean: {} } },
+  { name: "chart_open", selector: { boolean: {} } },
   { name: "show_cost", selector: { boolean: {} } },
   { name: "energy_prices", selector: { boolean: {} } },
   { name: "subscription_price", selector: { number: { min: 0, max: 200, step: 0.01, mode: "box", unit_of_measurement: "€/mois" } } },
@@ -2071,6 +2090,8 @@ const ZL_LABELS = {
   message_test: "Tester la fenêtre de message (à couper après l'essai)",
   live_open: "Section « En direct » ouverte au départ (rabattable d'un clic sur la carte)",
   index_open: "Section « Index du compteur » ouverte au départ (rabattable d'un clic sur la carte)",
+  totals_open: "Section « Semaine, mois et année » ouverte au départ (rabattable d'un clic sur la carte)",
+  chart_open: "Section « Historique » (graphique des derniers jours) ouverte au départ (rabattable d'un clic sur la carte)",
   show_details: "Afficher le détail du jour (énergie et coût par index, abonnement, total)",
   show_meter: "Afficher le compteur en direct (puissance, courant, tarif et prix, index, part HC)",
   hc_blue_entity: "Tempo : index HC jour bleu",
