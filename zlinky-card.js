@@ -15,7 +15,7 @@
  * © 2026 Marlboro62.
  */
 (() => {
-const CARD_VERSION = "0.1.1";
+const CARD_VERSION = "0.1.2-beta.1";
 
 /* ---------------------------------------------------------------- données */
 
@@ -1335,6 +1335,7 @@ ha-card.light .zl-chip.k-hp b { color: var(--med-hp-text, #b35619); }
 
 /** Statistiques relues toutes les 5 minutes : l'index du jour, lui, suit l'état du capteur en direct. */
 const ZL_RELOAD = 5 * 60000;
+const ZL_TIMEOUT = 60000;
 
 class ZlinkyCard extends LinkyLook {
   static getConfigElement() {
@@ -1369,7 +1370,9 @@ class ZlinkyCard extends LinkyLook {
     // Période en cours : le capteur dont l'état ressemble à « HP BLEU », « HCJB »… (Zigbee2MQTT nomme parfois
     // current_tarif le nom de l'option, TEMPO, et current_price la période en cours)
     const periods = all.filter((id) => /ltarf|ptec|tarif|price|periode/i.test(id));
-    out.tariff_entity = periods.find((id) => /\bH[CP]|^H[CP]/i.test(String(hass.states[id]?.state || ""))) || find(/ltarf|ptec/i);
+    // ZHA : active_register_tier_delivered donne le numéro de l'index en cours (1 = HC, 2 = HP…)
+    out.tariff_entity = periods.find((id) => /\bH[CP]|^H[CP]/i.test(String(hass.states[id]?.state || "")))
+      || find(/ltarf|ptec/i) || find(/active_register_tier/i);
     // Zigbee2MQTT : mode historique (BBRHCJB…) ou mode standard (index nommés « HC BLEU »…)
     const z2m = {
       hc_blue: /bbrhcjb|hc_?bleu|hcjb/i, hp_blue: /bbrhpjb|hp_?bleu|hpjb/i,
@@ -1417,7 +1420,8 @@ class ZlinkyCard extends LinkyLook {
         const fold = ev.target.closest("[data-fold]");
         if (fold) {
           const k = fold.dataset.fold;
-          this._folds = { ...this._folds, [k]: !this._isOpen(k) };
+          // choix lié au réglage du moment : changer le réglage dans l'éditeur reprend la main
+          this._folds = { ...this._folds, [k]: { open: !this._isOpen(k), cfg: this._config[`${k}_open`] !== false } };
           try { localStorage.setItem("zlinky-card:sections", JSON.stringify(this._folds)); } catch (e) { /* stockage indisponible */ }
           this._render(true);
           return;
@@ -1485,7 +1489,11 @@ class ZlinkyCard extends LinkyLook {
       const list = parts.map((p) => p.id);
       const yearStart = new Date(now.getFullYear() - 1, 0, 1);
       const yesterday = new Date(ZL.dayOf(now).getTime() - ZL.DAY);
-      const call = (start, period, types, statistic_ids, units) =>
+      // délai maximal : si l'historique de Home Assistant ne répond plus, la carte le dit et réessaie
+      // au prochain cycle au lieu d'attendre indéfiniment
+      const timed = (promise) => Promise.race([promise, new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("Home Assistant ne répond pas (historique occupé), nouvel essai dans 5 minutes")), ZL_TIMEOUT))]);
+      const call = (start, period, types, statistic_ids, units) => timed(
         this._hass.callWS({
           type: "recorder/statistics_during_period",
           start_time: start.toISOString(),
@@ -1494,7 +1502,7 @@ class ZlinkyCard extends LinkyLook {
           period,
           types,
           ...(units ? { units } : {}),
-        });
+        }));
       const [daily, hourly] = await Promise.all([
         call(yearStart, "day", ["change"], list, { energy: "kWh" }),
         call(yesterday, "hour", ["change", "state"], list, { energy: "kWh" }),
@@ -1962,24 +1970,49 @@ class ZlinkyCard extends LinkyLook {
     if (this._folds === undefined) {
       try { this._folds = JSON.parse(localStorage.getItem("zlinky-card:sections") || "{}") || {}; } catch (e) { this._folds = {}; }
     }
-    if (key in this._folds) return !!this._folds[key];
-    return this._config[`${key}_open`] !== false;
+    const cfg = this._config[`${key}_open`] !== false;
+    const saved = this._folds[key];
+    // choix fait sur la carte, tant que le réglage n'a pas changé depuis (ancien format booléen : ignoré)
+    if (saved && typeof saved === "object" && saved.cfg === cfg) return !!saved.open;
+    return cfg;
   }
 
-  /** Période en cours : l'index qui tourne fait foi (LTARF peut rester figé côté Zigbee) ; sinon LTARF / PTEC. */
+  /** Période en cours. Le capteur du ZLinky fait foi : texte (LTARF, PTEC : « HP BLEU », « HC.. ») ou numéro de
+   *  l'index en cours (ZHA, active_register_tier_delivered : 1 = HC, 2 = HP ; en Tempo 1 à 6 dans l'ordre des index).
+   *  L'index qui a bougé le plus récemment ne l'emporte que si le capteur semble figé (LTARF parfois bloqué côté
+   *  Zigbee) : son propre index n'a pas bougé depuis 20 minutes alors qu'un autre tourne. */
   _period() {
+    const parts = this._stats.parts;
     const raw = this._state(this._config.tariff_entity)?.state;
-    const text = raw && !["unknown", "unavailable", ""].includes(String(raw)) ? String(raw) : null;
+    const text = raw && !["unknown", "unavailable", "none", ""].includes(String(raw).toLowerCase()) ? String(raw).trim() : null;
     const kindOf = (v) => (/^\s*hc|heures?\s*creuses|\bhc\b/i.test(v) ? "hc" : /^\s*hp|heures?\s*pleines|\bhp\b/i.test(v) ? "hp" : null);
-    const a = this._activePart;
-    if (a && a.kind !== "base") {
-      const label = `${a.kind.toUpperCase()}${a.color ? ` ${TEMPO[a.color].label.toUpperCase()}` : ""}`;
-      const same = text && kindOf(text) === a.kind && (!a.color || zlColor(text) === a.color);
-      return { label: same ? text : label, kind: a.kind, part: a, note: text && !same ? `d'après les index (le ZLinky indique ${text})` : "" };
+    const labelOf = (p) => (p.kind === "base" ? "BASE" : `${p.kind.toUpperCase()}${p.color ? ` ${TEMPO[p.color].label.toUpperCase()}` : ""}`);
+    // index annoncé par le capteur
+    let said = null;
+    if (text) {
+      const tier = /^(?:tier\s*)?([1-9])$/i.exec(text);
+      if (tier) said = parts[Number(tier[1]) - 1] || null;
+      else {
+        const kind = kindOf(text), color = zlColor(text);
+        said = parts.find((p) => p.kind === kind && (!p.color || !color || p.color === color)) || null;
+      }
     }
-    if (!text) return null;
-    const kind = kindOf(text), color = zlColor(text);
-    return { label: text, kind, part: this._stats.parts.find((p) => p.kind === kind && (p.color === color || !p.color)), note: "" };
+    // index qui tourne : dernier changement d'état, s'il est récent et seul en tête
+    const changed = (p) => Date.parse(this._state(p.id)?.last_changed || "") || 0;
+    const now = Date.now(), FRESH = 20 * 60000;
+    const byRecent = parts.filter((p) => p.kind !== "base").map((p) => ({ p, t: changed(p) })).sort((x, y) => y.t - x.t);
+    const moving = byRecent.length > 1 && byRecent[0].t > byRecent[1].t && now - byRecent[0].t < FRESH ? byRecent[0].p : null;
+    let part = said, note = "";
+    if (moving && (!said || (moving !== said && now - changed(said) > FRESH))) {
+      part = moving;
+      if (text) note = `d'après les index (le ZLinky indique ${text})`;
+    } else if (!said && !text) {
+      part = this._activePart && this._activePart.kind !== "base" ? this._activePart : null;
+    }
+    if (!part) return text ? { label: text, kind: kindOf(text), part: null, note: "" } : null;
+    // libellé : le texte du ZLinky s'il correspond, sinon le nom de l'index (un numéro ZHA n'est pas parlant)
+    const keepText = text && part === said && kindOf(text) === part.kind;
+    return { label: keepText ? text : labelOf(part), kind: part.kind === "base" ? null : part.kind, part, note };
   }
 
   /** Période tarifaire en cours, affichée sous la puissance. */
@@ -2075,7 +2108,7 @@ const ZL_LABELS = {
   hp_entity: "Index heures pleines du ZLinky (kWh ou Wh)",
   base_entity: "Index Base du ZLinky (seulement sans heures creuses / pleines)",
   power_entity: "Puissance apparente du ZLinky (VA, facultatif : pic par jour et puissance actuelle)",
-  tariff_entity: "Période tarifaire en cours du ZLinky (LTARF ou PTEC, facultatif : « HP BLEU »…)",
+  tariff_entity: "Période tarifaire en cours du ZLinky (LTARF ou PTEC en Zigbee2MQTT, active_register_tier_delivered en ZHA ; facultatif)",
   current_entity: "Courant du ZLinky (IRMS1, facultatif)",
   voltage_entity: "Tension du ZLinky (URMS1, facultatif)",
   max_power_entity: "Puissance maximale du jour (SMAXSN, facultatif)",
