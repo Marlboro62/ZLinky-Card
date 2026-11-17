@@ -37,6 +37,7 @@ Même présentation que la [Carte Enedis Linky New](https://github.com/Marlboro6
 ## Ce que la carte affiche
 
 - **Aujourd'hui, en direct** : consommation depuis minuit, répartition heures creuses / heures pleines, coût, puissance actuelle, et écart avec hier à la même heure.
+- **Compteur en direct** : puissance, courant, tension, pic du jour, tarif en cours avec son prix, chaque index (un par couleur et HC/HP en Tempo), total et part des heures creuses, qualité du lien Zigbee.
 - **Semaine, mois et année** jusqu'à hier, avec la projection du mois en cours.
 - **Comparaison avec l'an dernier** seulement si les statistiques couvrent presque toute la période (au moins 90 % des jours) : pas de « 0 kWh » ni de pourcentage trompeur sur une installation récente.
 - **Graphique** des 7, 14 ou 31 derniers jours ; un clic sur un jour affiche son détail.
@@ -91,7 +92,11 @@ En Tempo, chaque jour prend la couleur de ses index : pastilles du graphique, d�
 | `hc_entity`, `hp_entity` | Index heures creuses et heures pleines (Wh ou kWh) | — |
 | `base_entity` | Index Base, à la place des deux précédents pour un contrat Base | — |
 | `hc_blue_entity` … `hp_red_entity` | Les 6 index Tempo (HC et HP des jours bleus, blancs et rouges) | — |
-| `tariff_entity` | Période tarifaire en cours (PTEC) : affichée, et couleur Tempo du jour | — |
+| `tariff_entity` | Période tarifaire en cours (LTARF ou PTEC) : affichée avec son prix, et couleur Tempo du jour | — |
+| `current_entity`, `voltage_entity` | Courant (IRMS1) et tension (URMS1) | — |
+| `max_power_entity` | Puissance maximale du jour (SMAXSN) | — |
+| `lqi_entity` | Qualité du lien Zigbee (linkquality) | — |
+| `show_meter` | Bloc « compteur en direct » | `true` |
 | `power_entity` | Puissance apparente (VA) : pic par jour et puissance actuelle | — |
 | `days` | Jours affichés dans le graphique : 7, 14 ou 31 | 14 |
 | `subscribed_power` | Puissance souscrite en kVA (jauge et dépassements) | — |
