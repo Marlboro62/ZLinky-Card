@@ -15,7 +15,7 @@
  * © 2026 Marlboro62.
  */
 (() => {
-const CARD_VERSION = "0.1.2";
+const CARD_VERSION = "0.1.3-beta.1";
 
 /* ---------------------------------------------------------------- données */
 
@@ -1241,7 +1241,11 @@ const ZL_DEFAULTS = {
   message2_entity: "",
   show_messages: true,
   show_details: true,
-  // sections rabattables du compteur : ouvertes au départ, puis l'état choisi est retenu par le navigateur
+  // sections rabattables : affichées ou masquées, puis ouvertes au départ (l'état choisi est retenu par le navigateur)
+  show_live: true,
+  show_index: true,
+  show_totals: true,
+  show_chart: true,
   live_open: true,
   index_open: true,
   totals_open: true,
@@ -1789,11 +1793,11 @@ class ZlinkyCard extends LinkyLook {
       ${this._hoursChart(all[this._selected])}
       ${c.show_details !== false ? this._details(all[this._selected], prices) : ""}
       ${c.show_meter !== false ? this._meter(prices) : ""}
-      ${this._fold("totals", "Semaine, mois et année",
+      ${c.show_totals === false ? "" : this._fold("totals", "Semaine, mois et année",
         [a.current_month !== null ? `${cap(new Date().toLocaleDateString("fr-FR", { month: "long" }))} ${fmt(a.current_month, 0)} kWh` : "",
           a.current_year !== null ? `Année ${fmt(a.current_year, 0)} kWh` : ""].filter(Boolean).join(" · "),
         this._tiles(a, all.filter((d) => !d.today)))}
-      ${this._fold("chart", "Historique",
+      ${c.show_chart === false ? "" : this._fold("chart", "Historique",
         `${shown.length} jours · ${fmt(shown.reduce((t, d) => t + (d.total || 0), 0), 0)} kWh`, this._chart(shown))}
       ${c.show_power !== false ? this._power(shown) : ""}
       ${this._ecowatt()}
@@ -1974,11 +1978,9 @@ class ZlinkyCard extends LinkyLook {
     }
     // tarif en cours et son prix (index de la période en cours)
     const period = this._period();
-    if (period) {
-      const price = period.part && prices ? prices[period.part.key] : null;
-      live.push(chip("Tarif", `${esc(period.label)}${price !== null && price !== undefined ? ` · ${fmt(price, 4)} €` : ""}`,
-        period.kind ? `k-${period.kind}` : "", period.note));
-    }
+    const pPrice = period && period.part && prices ? prices[period.part.key] : null;
+    const tariffTxt = period ? `${esc(period.label)}${pPrice !== null && pPrice !== undefined ? ` · ${fmt(pPrice, 4)} €` : ""}` : "";
+    if (period) live.push(chip("Tarif", tariffTxt, period.kind ? `k-${period.kind}` : "", period.note));
     // index en kWh
     const idx = this._stats.parts.map((p) => ({ p, v: ZL.kwh(this._state(p.id)) })).filter((x) => x.v !== null);
     const name = (p) => (p.kind === "base" ? "Index" : `Index ${p.kind.toUpperCase()}${p.color ? ` ${TEMPO[p.color].label.toLowerCase()}` : ""}`);
@@ -1990,7 +1992,7 @@ class ZlinkyCard extends LinkyLook {
     if (this._state(c.lqi_entity)) live.push(chip("Zigbee", `${fmt(num(c.lqi_entity), 0)} LQI`));
     if (!live.length && !index.length) return "";
     const section = (key, title, chips, summary) => {
-      if (!chips.length) return "";
+      if (!chips.length || c[`show_${key}`] === false) return "";
       const open = this._isOpen(key);
       return `<div class="zl-fold${open ? " open" : ""}">
         <button class="zl-fold-h" data-fold="${key}" aria-expanded="${open}">
@@ -2000,7 +2002,7 @@ class ZlinkyCard extends LinkyLook {
       </div>`;
     };
     // résumé affiché quand la section est rabattue
-    const liveSum = [pw ? `${fmt(num(c.power_entity), 0)} ${esc(unit(c.power_entity, "VA"))}` : "", period ? esc(period.label) : ""].filter(Boolean).join(" · ");
+    const liveSum = [pw ? `${fmt(num(c.power_entity), 0)} ${esc(unit(c.power_entity, "VA"))}` : "", tariffTxt].filter(Boolean).join(" · ");
     const indexSum = idx.length > 1 ? `Total ${fmt(total, 0)} kWh` : idx.length ? `${fmt(idx[0].v, 0)} kWh` : "";
     return `<section class="zl-meter">
       ${section("live", "En direct", live, liveSum)}
@@ -2062,10 +2064,12 @@ class ZlinkyCard extends LinkyLook {
     } else if (!said && !text) {
       part = this._activePart && this._activePart.kind !== "base" ? this._activePart : null;
     }
-    if (!part) return text ? { label: text, kind: kindOf(text), part: null, note: "" } : null;
+    // libellé lisible : les points de remplissage du ZLinky sont retirés (« HC.. » → « HC »)
+    const clean = (v) => v.replace(/[.\s]+$/, "").replace(/\.{2,}/g, " ").trim() || v;
+    if (!part) return text ? { label: clean(text), kind: kindOf(text), part: null, note: "" } : null;
     // libellé : le texte du ZLinky s'il correspond, sinon le nom de l'index (un numéro ZHA n'est pas parlant)
     const keepText = text && part === said && kindOf(text) === part.kind;
-    return { label: keepText ? text : labelOf(part), kind: part.kind === "base" ? null : part.kind, part, note };
+    return { label: keepText ? clean(text) : labelOf(part), kind: part.kind === "base" ? null : part.kind, part, note };
   }
 
   /** Période tarifaire en cours, affichée sous la puissance. */
@@ -2132,9 +2136,13 @@ const ZL_SCHEMA = [
   { name: "subscribed_power", selector: { number: { min: 3, max: 36, step: 3, mode: "box", unit_of_measurement: "kVA" } } },
   { name: "show_meter", selector: { boolean: {} } },
   { name: "show_details", selector: { boolean: {} } },
+  { name: "show_live", selector: { boolean: {} } },
   { name: "live_open", selector: { boolean: {} } },
+  { name: "show_index", selector: { boolean: {} } },
   { name: "index_open", selector: { boolean: {} } },
+  { name: "show_totals", selector: { boolean: {} } },
   { name: "totals_open", selector: { boolean: {} } },
+  { name: "show_chart", selector: { boolean: {} } },
   { name: "chart_open", selector: { boolean: {} } },
   { name: "show_cost", selector: { boolean: {} } },
   { name: "energy_prices", selector: { boolean: {} } },
@@ -2174,6 +2182,10 @@ const ZL_LABELS = {
   message2_entity: "Message 2 du compteur (MSG2, facultatif)",
   show_messages: "Afficher les messages du compteur en fenêtre (fermeture par ×, retour si le message change)",
   message_test: "Tester la fenêtre de message (à couper après l'essai)",
+  show_live: "Afficher la section « En direct » (puissance, courant, tension, tarif et prix)",
+  show_index: "Afficher la section « Index du compteur »",
+  show_totals: "Afficher la section « Semaine, mois et année »",
+  show_chart: "Afficher la section « Historique » (graphique des derniers jours)",
   live_open: "Section « En direct » ouverte au départ (rabattable d'un clic sur la carte)",
   index_open: "Section « Index du compteur » ouverte au départ (rabattable d'un clic sur la carte)",
   totals_open: "Section « Semaine, mois et année » ouverte au départ (rabattable d'un clic sur la carte)",
