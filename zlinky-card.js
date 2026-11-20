@@ -15,7 +15,7 @@
  * © 2026 Marlboro62.
  */
 (() => {
-const CARD_VERSION = "0.1.3";
+const CARD_VERSION = "0.1.4-beta.1";
 
 /* ---------------------------------------------------------------- données */
 
@@ -1241,6 +1241,7 @@ const ZL_DEFAULTS = {
   message2_entity: "",
   show_messages: true,
   show_details: true,
+  show_hc_ratio: true,
   // sections rabattables : affichées ou masquées, puis ouvertes au départ (l'état choisi est retenu par le navigateur)
   show_live: true,
   show_index: true,
@@ -1312,6 +1313,13 @@ ha-card { position: relative; display: block; }
 .zl-hl { display: flex; justify-content: space-between; font-size: calc(.68rem * var(--fs, 1)); color: var(--med-muted); padding: 2px 2px 0; }
 .zl-wait { font-size: calc(.78rem * var(--fs, 1)); color: var(--med-muted); padding: 10px 2px; }
 .zl-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.zl-ratio { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px; margin-top: 2px; padding-top: 8px;
+  border-top: 1px dashed var(--med-line); font-size: calc(.78rem * var(--fs, 1)); }
+.zl-ratio-t { color: var(--med-muted); }
+.zl-ratio > span[title] { display: inline-flex; align-items: baseline; gap: 6px; }
+.zl-ratio small { font-size: calc(.72rem * var(--fs, 1)); color: var(--med-muted); }
+.zl-ratio b { font-size: calc(.95rem * var(--fs, 1)); font-weight: 700; color: var(--med-hc-text, #8fb0f0); }
+ha-card.light .zl-ratio b { color: var(--med-hc-text, #2f5fb8); }
 .zl-fold { display: grid; gap: 6px; }
 .zl-fold-w { margin: 10px 12px 0; }
 .zl-fold-h { display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 10px; border: 1px solid var(--med-line); border-radius: 10px;
@@ -1837,7 +1845,31 @@ class ZlinkyCard extends LinkyLook {
         ? `<div class="split${TEMPO[day.tempo] ? ` tb-${day.tempo}` : ""}"><div class="bar"><i class="hc" style="width:${hcPct}%"></i><i class="hp" style="width:${100 - hcPct}%"></i></div>
            <div class="split-l"><span class="k-hc">Heures creuses ${fmt(day.hc, 2)} kWh</span><span class="k-hp">Heures pleines ${fmt(day.hp, 2)} kWh</span></div></div>`
         : ""}
+      ${this._config.show_hc_ratio !== false ? this._hcRatio(day) : ""}
     </section>`;
+  }
+
+  /** Part des heures creuses du jour affiché et du mois de ce jour (du 1er à ce jour inclus) :
+   *  HC / (HC + HP), pour vérifier qu'un contrat HC/HP reste intéressant. */
+  _hcRatio(day) {
+    if (this._base || !day?.date) return "";
+    const pct = (hc, hp) => (hc + hp > 0 ? (hc / (hc + hp)) * 100 : null);
+    const dayPct = day.hc !== null && day.hp !== null ? pct(day.hc, day.hp) : null;
+    const y = day.date.getFullYear(), m = day.date.getMonth();
+    const month = (this._all || []).filter((d) => d.date && d.date.getFullYear() === y && d.date.getMonth() === m
+      && d.date <= day.date && d.hc !== null && d.hp !== null);
+    const monthPct = month.length ? pct(month.reduce((t, d) => t + d.hc, 0), month.reduce((t, d) => t + d.hp, 0)) : null;
+    if (dayPct === null && monthPct === null) return "";
+    const name = day.date.toLocaleDateString("fr-FR", { month: "long" });
+    const last = new Date(y, m + 1, 0).getDate();
+    // mois du jour affiché : « en cours » aujourd'hui, « du 1er au 12 » pour un jour passé, rien si le mois est complet
+    const monthL = day.today ? `${name} en cours` : day.date.getDate() === last ? name : `${name}, du 1er au ${day.date.getDate()}`;
+    const item = (label, v, title) => `<span title="${esc(title)}"><small>${esc(label)}</small><b>${fmt(v, 1)} %</b></span>`;
+    return `<div class="zl-ratio">
+      <span class="zl-ratio-t">Part HC</span>
+      ${dayPct !== null ? item(day.today ? "Aujourd'hui" : "Ce jour", dayPct, "Heures creuses / (heures creuses + heures pleines) sur la journée") : ""}
+      ${monthPct !== null ? item(cap(monthL), monthPct, `Heures creuses / (heures creuses + heures pleines) sur ${month.length} jour${month.length > 1 ? "s" : ""}`) : ""}
+    </div>`;
   }
 
   /** Message du fournisseur ou du distributeur (MSG1, MSG2 du compteur), en fenêtre sur la carte.
@@ -2136,6 +2168,7 @@ const ZL_SCHEMA = [
   { name: "subscribed_power", selector: { number: { min: 3, max: 36, step: 3, mode: "box", unit_of_measurement: "kVA" } } },
   { name: "show_meter", selector: { boolean: {} } },
   { name: "show_details", selector: { boolean: {} } },
+  { name: "show_hc_ratio", selector: { boolean: {} } },
   { name: "show_live", selector: { boolean: {} } },
   { name: "live_open", selector: { boolean: {} } },
   { name: "show_index", selector: { boolean: {} } },
@@ -2191,6 +2224,7 @@ const ZL_LABELS = {
   totals_open: "Section « Semaine, mois et année » ouverte au départ (rabattable d'un clic sur la carte)",
   chart_open: "Section « Historique » (graphique des derniers jours) ouverte au départ (rabattable d'un clic sur la carte)",
   show_details: "Afficher le détail du jour (énergie et coût par index, abonnement, total)",
+  show_hc_ratio: "Afficher la part des heures creuses du jour et du mois en haut de la carte (contrat HC/HP ou Tempo)",
   show_meter: "Afficher le compteur en direct (puissance, courant, tarif et prix, index, part HC)",
   hc_blue_entity: "Tempo : index HC jour bleu",
   hp_blue_entity: "Tempo : index HP jour bleu",
