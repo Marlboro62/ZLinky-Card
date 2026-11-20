@@ -15,7 +15,7 @@
  * © 2026 Marlboro62.
  */
 (() => {
-const CARD_VERSION = "0.1.4";
+const CARD_VERSION = "0.1.5";
 
 /* ---------------------------------------------------------------- données */
 
@@ -1301,8 +1301,17 @@ ha-card { position: relative; display: block; }
 .zl-sw.k-hc.tb-white { background: var(--med-hc-white, var(--med-hc)); } .zl-sw.k-hp.tb-white { background: var(--med-hp-white, var(--med-hp)); }
 .zl-sw.k-hc.tb-red { background: var(--med-hc-red, var(--med-hc)); } .zl-sw.k-hp.tb-red { background: var(--med-hp-red, var(--med-hp)); }
 .zl-sw.zl-sub { background: #f1f5f9; box-shadow: inset 0 0 0 1px #94a3b8; }
+/* colonne gauche du bloc du jour : peut rétrécir (la date passe à la ligne) sans pousser le coût hors de la carte */
+.hero { grid-template-columns: minmax(0, 1fr) auto; }
+/* carte étroite : le coût passe sous la consommation au lieu de serrer la date */
+@container (max-width: 400px) {
+  .hero { grid-template-columns: minmax(0, 1fr); }
+  .hero-r { text-align: left; }
+  .hero-r .cost-l { max-width: none; }
+}
+.zl-nav .hero-l em { font-style: normal; white-space: nowrap; }
 .zl-nav { display: flex; align-items: center; gap: 6px; flex-wrap: nowrap; min-width: 0; }
-.zl-nav .hero-l { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.zl-nav .hero-l { min-width: 0; }
 .zl-btn { border: 1px solid var(--med-line); background: var(--med-surface); color: var(--med-text); border-radius: 999px;
   min-width: 30px; height: 28px; padding: 0 9px; font: inherit; font-size: calc(.95rem * var(--fs, 1)); line-height: 1; cursor: pointer; }
 .zl-btn:hover:not([disabled]), .zl-btn:focus-visible { border-color: var(--med-blue); outline: none; }
@@ -1827,7 +1836,7 @@ class ZlinkyCard extends LinkyLook {
       <div>
         <div class="zl-nav">
           <button class="zl-btn" data-nav="prev" title="Jour précédent" aria-label="Jour précédent"${this._selected >= (this._all?.length || 1) - 1 ? " disabled" : ""}>‹</button>
-          <span class="hero-l" title="${esc(cap(when))}">${esc(cap(live ? when : day.date.toLocaleDateString("fr-FR", { weekday: "short", day: "numeric", month: "short" })))}${live ? " · en cours" : ""}</span>
+          <span class="hero-l" title="${esc(cap(when))}">${esc(cap(day.date.toLocaleDateString("fr-FR", { weekday: "short", day: "numeric", month: "short" })))}${live ? " <em>· en cours</em>" : ""}</span>
           <button class="zl-btn" data-nav="next" title="Jour suivant" aria-label="Jour suivant"${live ? " disabled" : ""}>›</button>
           ${live ? "" : `<button class="zl-btn zl-today" data-nav="today">Aujourd'hui</button>`}
         </div>
