@@ -15,7 +15,7 @@
  * © 2026 Marlboro62.
  */
 (() => {
-const CARD_VERSION = "0.1.5";
+const CARD_VERSION = "0.1.6";
 
 /* ---------------------------------------------------------------- données */
 
@@ -122,6 +122,28 @@ const euro = (n) =>
   n === null || n === undefined
     ? "—"
     : Number(n).toLocaleString("fr-FR", { style: "currency", currency: "EUR" });
+
+/** Échelle d'un graphique en barres : pas « rond » (1, 2, 2,5 ou 5 × 10ⁿ) donnant 3 ou 4 graduations,
+ *  haut de l'échelle arrondi au pas. Sans échelle (show_scale: false), le haut reste juste au-dessus
+ *  de la plus haute barre, comme avant. */
+const chartScale = (dataMax, on, floor = 1) => {
+  const m = Math.max(floor, dataMax || 0);
+  if (!on) return { top: m * 1.08, ticks: [], gutter: "", grid: "" };
+  const raw = m / 3.5;
+  const mag = 10 ** Math.floor(Math.log10(raw));
+  const step = [1, 2, 2.5, 5, 10].map((k) => k * mag).find((s) => s >= raw);
+  const top = Math.ceil(m / step - 1e-9) * step;
+  const ticks = [];
+  for (let v = 0; v <= top + step / 2; v += step) ticks.push(v);
+  const digits = Math.max(0, -Math.floor(Math.log10(step) + 1e-9) + (String(step / mag).includes(".") ? 1 : 0));
+  return {
+    top,
+    ticks,
+    // lignes horizontales dans le SVG (trait fin quel que soit l'étirement), étiquettes en HTML (texte non déformé)
+    grid: ticks.slice(1).map((v) => `<line class="grid" x1="0" x2="100" y1="${100 - (v / top) * 100}" y2="${100 - (v / top) * 100}" vector-effect="non-scaling-stroke"/>`).join(""),
+    gutter: `<div class="axis" aria-hidden="true">${ticks.map((v) => `<span style="top:${100 - (v / top) * 100}%">${fmt(v, digits)}</span>`).join("")}</div>`,
+  };
+};
 
 const TEMPO = {
   blue: { label: "Bleu", cls: "t-blue" },
@@ -591,7 +613,8 @@ class LinkyLook extends HTMLElement {
   _chart(days) {
     const chrono = days.map((d, i) => ({ ...d, i })).reverse();
     const n = chrono.length;
-    const max = Math.max(1, ...chrono.map((d) => d.total || 0)) * 1.08;
+    const scale = chartScale(Math.max(0, ...chrono.map((d) => d.total || 0)), this._config.show_scale !== false);
+    const max = scale.top;
     const H = 100;
     const slot = 100 / n;
     const w = slot * 0.62;
@@ -637,10 +660,10 @@ class LinkyLook extends HTMLElement {
       legend = `<span class="legend-t">HC / HP</span>${present.map((t) => `<i class="k-hc tb-${t}"></i><i class="k-hp tb-${t} pair"></i>${TEMPO[t].label}`).join("")}${
         others ? '<i class="k-hc"></i><i class="k-hp pair"></i>Autres' : ""}`;
     }
-    return `<section class="chart">
-      <div class="chart-h"><span>${n} derniers jours</span>
+    return `<section class="chart${scale.gutter ? " scaled" : ""}">
+      <div class="chart-h"><span>${n} derniers jours${scale.gutter ? " · kWh" : ""}</span>
         <span class="legend">${legend}</span></div>
-      <svg viewBox="0 0 100 ${H}" preserveAspectRatio="none" role="img" aria-label="Consommation des ${n} derniers jours">${bars}</svg>
+      <div class="plot">${scale.gutter}<svg viewBox="0 0 100 ${H}" preserveAspectRatio="none" role="img" aria-label="Consommation des ${n} derniers jours">${scale.grid}${bars}</svg></div>
       <div class="days" style="grid-template-columns:repeat(${n},1fr)">${labels}</div>
     </section>`;
   }
@@ -811,6 +834,15 @@ ${TEMPO_CSS}
 .chart rect.sel { fill: rgba(255,255,255,.06); }
 .chart rect.hit { fill: transparent; cursor: pointer; }
 .days { display: grid; margin-top: 4px; }
+/* échelle des graphiques : colonne des valeurs à gauche, lignes horizontales discrètes */
+.plot { position: relative; }
+.chart.scaled { --axis: 32px; }
+.chart.scaled .plot, .chart.scaled .days, .chart.scaled .zl-hl { margin-left: var(--axis); }
+.axis { position: absolute; top: 0; bottom: 0; left: calc(-1 * var(--axis)); width: calc(var(--axis) - 5px); pointer-events: none; }
+.axis span { position: absolute; right: 0; transform: translateY(-50%); font-size: calc(.62rem * var(--fs, 1)); line-height: 1;
+  color: var(--med-muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.axis span:first-child { transform: translateY(-100%); }
+.chart line.grid { stroke: var(--med-line); stroke-width: 1; stroke-dasharray: 3 3; }
 .day { all: unset; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 1px;
   padding: 4px 0; border-radius: 8px; font-size: .68rem; color: var(--med-muted); text-transform: capitalize; }
 .day b { color: var(--med-text); font-size: .78rem; }
@@ -1242,6 +1274,7 @@ const ZL_DEFAULTS = {
   show_messages: true,
   show_details: true,
   show_hc_ratio: true,
+  show_scale: true,
   // sections rabattables : affichées ou masquées, puis ouvertes au départ (l'état choisi est retenu par le navigateur)
   show_live: true,
   show_index: true,
@@ -1977,7 +2010,8 @@ class ZlinkyCard extends LinkyLook {
         if (part.color && row.change > h.top) { h.top = row.change; h.color = part.color; }
       }
     }
-    const max = Math.max(0.05, ...hours.map((h) => h.hc + h.hp + h.base)) * 1.08;
+    const scale = chartScale(Math.max(...hours.map((h) => h.hc + h.hp + h.base)), this._config.show_scale !== false, 0.05);
+    const max = scale.top;
     const H = 100, slot = 100 / 24, w = slot * 0.7;
     const bars = hours.map((h, k) => {
       const x = k * slot + (slot - w) / 2;
@@ -1989,9 +2023,9 @@ class ZlinkyCard extends LinkyLook {
         ${hHp ? `<rect class="hp${tb}" x="${x}" y="${H - hHc - hHp}" width="${w}" height="${hHp}"/>` : ""}</g>`;
     }).join("");
     const top = hours.reduce((m, h, k) => (h.hc + h.hp + h.base > m.v ? { v: h.hc + h.hp + h.base, k } : m), { v: 0, k: 0 });
-    return `<section class="chart zl-hours">
-      <div class="chart-h"><span>Heure par heure${top.v ? ` · maximum ${fmt(top.v, 2)} kWh de ${top.k} h à ${top.k + 1} h` : ""}</span></div>
-      <svg viewBox="0 0 100 ${H}" preserveAspectRatio="none" role="img" aria-label="Consommation heure par heure">${bars}</svg>
+    return `<section class="chart zl-hours${scale.gutter ? " scaled" : ""}">
+      <div class="chart-h"><span>Heure par heure${scale.gutter ? " · kWh" : ""}${top.v ? ` · maximum ${fmt(top.v, 2)} kWh de ${top.k} h à ${top.k + 1} h` : ""}</span></div>
+      <div class="plot">${scale.gutter}<svg viewBox="0 0 100 ${H}" preserveAspectRatio="none" role="img" aria-label="Consommation heure par heure">${scale.grid}${bars}</svg></div>
       <div class="zl-hl"><span>0 h</span><span>6 h</span><span>12 h</span><span>18 h</span><span>24 h</span></div>
     </section>`;
   }
@@ -2178,6 +2212,7 @@ const ZL_SCHEMA = [
   { name: "show_meter", selector: { boolean: {} } },
   { name: "show_details", selector: { boolean: {} } },
   { name: "show_hc_ratio", selector: { boolean: {} } },
+  { name: "show_scale", selector: { boolean: {} } },
   { name: "show_live", selector: { boolean: {} } },
   { name: "live_open", selector: { boolean: {} } },
   { name: "show_index", selector: { boolean: {} } },
@@ -2233,6 +2268,7 @@ const ZL_LABELS = {
   totals_open: "Section « Semaine, mois et année » ouverte au départ (rabattable d'un clic sur la carte)",
   chart_open: "Section « Historique » (graphique des derniers jours) ouverte au départ (rabattable d'un clic sur la carte)",
   show_details: "Afficher le détail du jour (énergie et coût par index, abonnement, total)",
+  show_scale: "Afficher l'échelle des graphiques (valeurs en kWh à gauche et lignes horizontales)",
   show_hc_ratio: "Afficher la part des heures creuses du jour et du mois en haut de la carte (contrat HC/HP ou Tempo)",
   show_meter: "Afficher le compteur en direct (puissance, courant, tarif et prix, index, part HC)",
   hc_blue_entity: "Tempo : index HC jour bleu",
